@@ -1,0 +1,9 @@
+requests
+boto3
+botocore
+psycopg2-binary
+jsonlib-python3
+collections
+datetime
+difflib
+re
