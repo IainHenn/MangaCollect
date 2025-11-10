@@ -16,6 +16,29 @@ from difflib import SequenceMatcher
 class RateLimiter:
     """Manage API rate limits"""
     def __init__(self, config_file='config.json'):
+        # Load configuration
+        with open(config_file, 'r') as f:
+            config = json.load(f)
+        
+        self.anilist_url = "https://graphql.anilist.co"
+        self.google_books_url = "https://www.googleapis.com/books/v1/volumes"
+        
+        # Google Books API key
+        google_books_config = config.get('google_books', {})
+        self.google_books_api_key = google_books_config.get('api_key')
+        
+        if not self.google_books_api_key:
+            print("⚠️  WARNING: No Google Books API key found in config")
+            print("   You'll be limited to 10 results per request")
+            print("   Get a free API key at: https://console.cloud.google.com/apis/credentials")
+        else:
+            print(f"✓ Google Books API key loaded")
+        
+        # Database connection
+        db_config = config['database']
+        self.conn = None
+        self.connect_db(db_config)
+        
         with open(config_file, 'r') as f:
             config = json.load(f)
         
@@ -164,6 +187,16 @@ class MangaScraper:
             print(f"⚠️  Could not load publishers from database: {e}")
             print("   Continuing without publisher validation")
             return []
+    
+    def get_current_manga_count(self) -> int:
+        """Get current count of manga in database"""
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM manga")
+                return cur.fetchone()[0]
+        except Exception as e:
+            print(f"Error getting manga count: {e}")
+            return 0
     
     def fuzzy_match_publisher(self, publisher: str) -> Optional[tuple]:
         """
@@ -350,27 +383,35 @@ class MangaScraper:
             raise Exception(f"Network error calling AniList: {e}")
     
     def get_manga_for_update(self) -> List[Dict]:
-        """Get manga that need volume updates (not checked recently)"""
+        """Get manga that need volume updates (ONLY from initial 500)"""
         hours_ago = datetime.now() - timedelta(hours=self.update_interval_hours)
         
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # FIXED: Only get manga from the top 500 by popularity
                 cur.execute("""
-                    SELECT id, anilist_id, title_romaji, title_english, 
-                           authors, status, last_checked_for_volumes
-                    FROM manga
-                    WHERE (last_checked_for_volumes IS NULL 
-                           OR last_checked_for_volumes < %s)
-                    AND status IN ('RELEASING', 'FINISHED', 'CANCELLED')
+                    WITH top_manga AS (
+                        SELECT id 
+                        FROM manga 
+                        ORDER BY popularity DESC NULLS LAST 
+                        LIMIT %s
+                    )
+                    SELECT m.id, m.anilist_id, m.title_romaji, m.title_english, 
+                           m.authors, m.status, m.last_checked_for_volumes
+                    FROM manga m
+                    INNER JOIN top_manga tm ON m.id = tm.id
+                    WHERE (m.last_checked_for_volumes IS NULL 
+                           OR m.last_checked_for_volumes < %s)
+                    AND m.status IN ('RELEASING', 'FINISHED', 'CANCELLED')
                     ORDER BY 
                         CASE 
-                            WHEN status = 'RELEASING' THEN 1
-                            WHEN last_checked_for_volumes IS NULL THEN 2
+                            WHEN m.status = 'RELEASING' THEN 1
+                            WHEN m.last_checked_for_volumes IS NULL THEN 2
                             ELSE 3
                         END,
-                        popularity DESC NULLS LAST
+                        m.popularity DESC NULLS LAST
                     LIMIT %s
-                """, (hours_ago, self.batch_size))
+                """, (self.initial_fetch_count, hours_ago, self.batch_size))
                 
                 return cur.fetchall()
         except Exception as e:
@@ -400,11 +441,16 @@ class MangaScraper:
         
         params = {
             'q': search_query,
-            'maxResults': 40,  # Maximum allowed by Google Books
+            'maxResults': 40,
             'startIndex': start_index,
             'printType': 'books',
-            'langRestrict': 'en'
+            'langRestrict': 'en',
+            'orderBy': 'newest'
         }
+        
+        # Add API key if available
+        if self.google_books_api_key:
+            params['key'] = self.google_books_api_key
         
         try:
             response = requests.get(self.google_books_url, params=params, timeout=30)
@@ -417,6 +463,16 @@ class MangaScraper:
                 }
             elif response.status_code == 429:
                 print(f"  Google Books rate limit hit")
+                return None
+            elif response.status_code == 403:
+                error_data = response.json()
+                error_message = error_data.get('error', {}).get('message', '')
+                
+                if 'API key' in error_message or 'quota' in error_message.lower():
+                    print(f"  ✗ Google Books API error: {error_message}")
+                    print(f"     Check your API key and quotas at: https://console.cloud.google.com/")
+                else:
+                    print(f"  Google Books 403 error: {error_message}")
                 return None
             else:
                 print(f"  Google Books API error: {response.status_code}")
@@ -474,7 +530,7 @@ class MangaScraper:
             return None
     
     def insert_or_update_manga(self, manga_data: Dict) -> Optional[int]:
-        """Insert or update manga in database"""
+        """Insert or update manga in database - ONLY if under limit"""
         try:
             with self.conn.cursor() as cur:
                 cur.execute("SELECT id FROM manga WHERE anilist_id = %s", (manga_data['anilist_id'],))
@@ -499,6 +555,12 @@ class MangaScraper:
                     ))
                     self.conn.commit()
                     return existing[0]
+                
+                # FIXED: Check if we've already reached the limit before inserting
+                current_count = self.get_current_manga_count()
+                if current_count >= self.initial_fetch_count:
+                    print(f"  ⚠️  Manga limit reached ({self.initial_fetch_count}), skipping insert")
+                    return None
                 
                 # Insert new
                 insert_query = """
@@ -770,6 +832,12 @@ class MangaScraper:
             if not self.running:
                 break
             
+            # FIXED: Check if we've reached the limit before fetching more
+            current_count = self.get_current_manga_count()
+            if current_count >= self.initial_fetch_count:
+                print(f"\n✓ Reached manga limit ({self.initial_fetch_count}), stopping initial scrape")
+                break
+            
             try:
                 print(f"\nFetching page {page}/{pages}...")
                 data = self.fetch_anilist_manga(page, per_page)
@@ -777,6 +845,12 @@ class MangaScraper:
                 
                 for manga in manga_list:
                     if not self.running:
+                        break
+                    
+                    # FIXED: Check limit again before processing each manga
+                    current_count = self.get_current_manga_count()
+                    if current_count >= self.initial_fetch_count:
+                        print(f"\n✓ Reached manga limit ({self.initial_fetch_count}), stopping")
                         break
                     
                     print(f"\n  Processing: {manga['title'].get('romaji')}")
@@ -938,7 +1012,7 @@ class MangaScraper:
         errors = 0
         
         manga_list = self.get_manga_for_update()
-        print(f"Found {len(manga_list)} manga to check")
+        print(f"Found {len(manga_list)} manga to check (from top {self.initial_fetch_count})")
         
         for manga in manga_list:
             if not self.running:
@@ -966,6 +1040,7 @@ class MangaScraper:
         print("\n" + "="*60)
         print("MANGA SCRAPER - CONTINUOUS MODE")
         print("="*60)
+        print(f"Manga limit: {self.initial_fetch_count}")
         print(f"Update interval: {self.update_interval_hours} hours")
         print(f"Batch size: {self.batch_size} manga per update")
         print(f"Publisher match threshold: {self.publisher_match_threshold}")
@@ -978,9 +1053,13 @@ class MangaScraper:
                 cur.execute("SELECT COUNT(*) FROM manga")
                 manga_count = cur.fetchone()[0]
                 
-                if manga_count == 0:
-                    print("\nNo manga in database - running initial scrape...")
+                print(f"\nCurrent manga in database: {manga_count}")
+                
+                if manga_count < self.initial_fetch_count:
+                    print(f"Need {self.initial_fetch_count - manga_count} more manga - running initial scrape...")
                     self.initial_scrape()
+                else:
+                    print(f"✓ Already have {self.initial_fetch_count}+ manga, skipping initial scrape")
         except Exception as e:
             print(f"Error checking manga count: {e}")
         
@@ -1032,8 +1111,8 @@ class MangaScraper:
 def main():
     print("""
     ╔══════════════════════════════════════════════════════════╗
-    ║         MANGA COLLECTION SCRAPER v2.1                    ║
-    ║         with Publisher Fuzzy Matching                    ║
+    ║         MANGA COLLECTION SCRAPER v2.2                    ║
+    ║         LIMITED TO TOP 500 MANGA FROM ANILIST            ║
     ╚══════════════════════════════════════════════════════════╝
     """)
     
