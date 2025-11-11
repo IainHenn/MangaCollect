@@ -144,6 +144,7 @@ class MangaScraper:
         
         # Track state
         self.running = True
+        self.manga_inserted_count = 0  # Track insertions in this session
         signal.signal(signal.SIGINT, self.signal_handler)
         signal.signal(signal.SIGTERM, self.signal_handler)
     
@@ -534,14 +535,15 @@ class MangaScraper:
             return None
     
     def insert_or_update_manga(self, manga_data: Dict) -> Optional[int]:
-        """Insert or update manga in database - ONLY if under limit"""
+        """Insert or update manga in database - STRICTLY enforce limit"""
         try:
             with self.conn.cursor() as cur:
+                # First check if manga already exists
                 cur.execute("SELECT id FROM manga WHERE anilist_id = %s", (manga_data['anilist_id'],))
                 existing = cur.fetchone()
                 
                 if existing:
-                    # Update existing
+                    # Update existing manga (doesn't count toward limit)
                     cur.execute("""
                         UPDATE manga SET
                             title_romaji = %s, title_english = %s, title_native = %s,
@@ -560,13 +562,16 @@ class MangaScraper:
                     self.conn.commit()
                     return existing[0]
                 
-                # Check if we've already reached the limit before inserting
-                current_count = self.get_current_manga_count()
+                # NEW MANGA - Check limit INSIDE transaction with row lock
+                cur.execute("SELECT COUNT(*) FROM manga FOR UPDATE")
+                current_count = cur.fetchone()[0]
+                
                 if current_count >= self.initial_fetch_count:
+                    self.conn.rollback()
                     print(f"  ⚠️  Manga limit reached ({self.initial_fetch_count}), skipping insert")
                     return None
                 
-                # Insert new
+                # Insert new manga
                 insert_query = """
                 INSERT INTO manga (
                     anilist_id, title_romaji, title_english, title_native,
@@ -598,7 +603,8 @@ class MangaScraper:
                 
                 manga_id = cur.fetchone()[0]
                 self.conn.commit()
-                print(f"  ✓ Inserted manga (id: {manga_id})")
+                self.manga_inserted_count += 1
+                print(f"  ✓ Inserted manga (id: {manga_id}) [{self.manga_inserted_count}/{self.initial_fetch_count}]")
                 return manga_id
                 
         except Exception as e:
@@ -818,39 +824,45 @@ class MangaScraper:
         }
     
     def initial_scrape(self):
-        """Initial scrape of top manga"""
+        """Initial scrape of top manga - STRICT 500 LIMIT"""
         print("\n" + "="*60)
         print("INITIAL SCRAPE - Fetching top manga")
         print("="*60)
         
         start_time = datetime.now()
-        manga_count = 0
+        self.manga_inserted_count = 0  # Reset counter
         volume_count = 0
         errors = 0
         
         per_page = 50
-        pages = (self.initial_fetch_count + per_page - 1) // per_page
+        pages_needed = (self.initial_fetch_count + per_page - 1) // per_page
         
-        for page in range(1, pages + 1):
+        for page in range(1, pages_needed + 1):
             if not self.running:
                 break
             
-            # Check if we've reached the limit before fetching more
+            # Check if we've reached limit BEFORE fetching next page
             current_count = self.get_current_manga_count()
             if current_count >= self.initial_fetch_count:
                 print(f"\n✓ Reached manga limit ({self.initial_fetch_count}), stopping initial scrape")
                 break
             
             try:
-                print(f"\nFetching page {page}/{pages}...")
+                remaining = self.initial_fetch_count - current_count
+                fetch_size = min(per_page, remaining)
+                
+                print(f"\nFetching page {page}/{pages_needed} ({remaining} manga remaining)...")
                 data = self.fetch_anilist_manga(page, per_page)
                 manga_list = data['data']['Page']['media']
                 
-                for manga in manga_list:
+                # Only process up to the limit
+                manga_to_process = manga_list[:remaining]
+                
+                for manga in manga_to_process:
                     if not self.running:
                         break
                     
-                    # Check limit again before processing each manga
+                    # Double check limit before each manga
                     current_count = self.get_current_manga_count()
                     if current_count >= self.initial_fetch_count:
                         print(f"\n✓ Reached manga limit ({self.initial_fetch_count}), stopping")
@@ -861,22 +873,29 @@ class MangaScraper:
                     manga_id = self.insert_or_update_manga(manga_data)
                     
                     if manga_id:
-                        manga_count += 1
-                        
+                        # Only fetch volumes if manga was inserted (not just updated)
                         if self.has_english_release(manga):
                             volumes = self.check_for_new_volumes(manga_id, manga_data)
                             volume_count += volumes
                     else:
                         errors += 1
                 
+                # If we processed fewer manga than requested, we hit the limit
+                if len(manga_to_process) < len(manga_list):
+                    print(f"\n✓ Reached manga limit ({self.initial_fetch_count}), stopping")
+                    break
+                
             except Exception as e:
                 print(f"Error on page {page}: {e}")
                 errors += 1
         
         duration = datetime.now() - start_time
+        final_count = self.get_current_manga_count()
+        
         print(f"\n{'='*60}")
         print(f"Initial scrape complete:")
-        print(f"  Manga added: {manga_count}")
+        print(f"  Manga in database: {final_count}")
+        print(f"  Manga added this run: {self.manga_inserted_count}")
         print(f"  Volumes added: {volume_count}")
         print(f"  Errors: {errors}")
         print(f"  Duration: {duration}")
@@ -1130,8 +1149,8 @@ class MangaScraper:
 def main():
     print("""
     ╔══════════════════════════════════════════════════════════╗
-    ║         MANGA COLLECTION SCRAPER v2.2                    ║
-    ║         LIMITED TO TOP 500 MANGA FROM ANILIST            ║
+    ║         MANGA COLLECTION SCRAPER v2.3                    ║
+    ║         STRICTLY LIMITED TO TOP 500 MANGA                ║
     ╚══════════════════════════════════════════════════════════╝
     """)
     
