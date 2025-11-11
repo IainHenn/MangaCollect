@@ -16,7 +16,7 @@ from difflib import SequenceMatcher
 class RateLimiter:
     """Manage API rate limits"""
     def __init__(self, config_file='config.json'):
-        # Load configuration
+        # Load configuration ONCE
         with open(config_file, 'r') as f:
             config = json.load(f)
         
@@ -34,14 +34,7 @@ class RateLimiter:
         else:
             print(f"✓ Google Books API key loaded")
         
-        # Database connection
-        db_config = config['database']
-        self.conn = None
-        self.connect_db(db_config)
-        
-        with open(config_file, 'r') as f:
-            config = json.load(f)
-        
+        # Rate limits
         self.limits = config.get('rate_limits', {})
         self.state_file = 'rate_limit_state.json'
         self.state = self.load_state()
@@ -388,7 +381,6 @@ class MangaScraper:
         
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
-                # FIXED: Only get manga from the top 500 by popularity
                 cur.execute("""
                     WITH top_manga AS (
                         SELECT id 
@@ -397,7 +389,8 @@ class MangaScraper:
                         LIMIT %s
                     )
                     SELECT m.id, m.anilist_id, m.title_romaji, m.title_english, 
-                           m.authors, m.status, m.last_checked_for_volumes
+                           m.authors, m.status, m.last_checked_for_volumes,
+                           m.popularity, m.total_volumes
                     FROM manga m
                     INNER JOIN top_manga tm ON m.id = tm.id
                     WHERE (m.last_checked_for_volumes IS NULL 
@@ -420,13 +413,23 @@ class MangaScraper:
     
     def has_english_release(self, manga: Dict) -> bool:
         """Check if manga likely has English release"""
-        english_title = manga.get('title', {}).get('english') if isinstance(manga.get('title'), dict) else manga.get('title_english')
+        # Handle both dict and database record formats
+        if isinstance(manga, dict):
+            title_data = manga.get('title')
+            if isinstance(title_data, dict):
+                english_title = title_data.get('english')
+            else:
+                english_title = manga.get('title_english')
+            popularity = manga.get('popularity', 0)
+        else:
+            # Database record
+            english_title = getattr(manga, 'title_english', None)
+            popularity = getattr(manga, 'popularity', 0)
         
         if english_title:
             return True
         
-        popularity = manga.get('popularity', 0)
-        if popularity > 10000:
+        if popularity and popularity > 10000:
             return True
         
         return False
@@ -449,8 +452,8 @@ class MangaScraper:
         }
         
         # Add API key if available
-        if self.google_books_api_key:
-            params['key'] = self.google_books_api_key
+        if self.rate_limiter.google_books_api_key:
+            params['key'] = self.rate_limiter.google_books_api_key
         
         try:
             response = requests.get(self.google_books_url, params=params, timeout=30)
@@ -526,7 +529,8 @@ class MangaScraper:
         
         try:
             return f"{year}-{month:02d}-{day:02d}"
-        except:
+        except ValueError as e:
+            print(f"  ⚠️  Invalid date: {year}-{month}-{day}: {e}")
             return None
     
     def insert_or_update_manga(self, manga_data: Dict) -> Optional[int]:
@@ -556,7 +560,7 @@ class MangaScraper:
                     self.conn.commit()
                     return existing[0]
                 
-                # FIXED: Check if we've already reached the limit before inserting
+                # Check if we've already reached the limit before inserting
                 current_count = self.get_current_manga_count()
                 if current_count >= self.initial_fetch_count:
                     print(f"  ⚠️  Manga limit reached ({self.initial_fetch_count}), skipping insert")
@@ -567,12 +571,12 @@ class MangaScraper:
                 INSERT INTO manga (
                     anilist_id, title_romaji, title_english, title_native,
                     description, authors, artists, genres, tags,
-                    serialization, start_date, end_date, status,
+                    start_date, end_date, status,
                     country_of_origin, total_volumes, total_chapters,
                     average_score, mean_score, is_adult, popularity,
                     cover_image_url, cover_image_s3_key, anilist_url, adaptations
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                 ) RETURNING id
                 """
@@ -582,14 +586,14 @@ class MangaScraper:
                     manga_data['title_english'], manga_data['title_native'],
                     manga_data['description'], manga_data['authors'],
                     manga_data['artists'], manga_data['genres'],
-                    manga_data['tags'], manga_data['serialization'],
-                    manga_data['start_date'], manga_data['end_date'],
-                    manga_data['status'], manga_data['country_of_origin'],
-                    manga_data['total_volumes'], manga_data['total_chapters'],
-                    manga_data['average_score'], manga_data['mean_score'],
-                    manga_data['is_adult'], manga_data['popularity'],
-                    manga_data['cover_image_url'], manga_data['cover_image_s3_key'],
-                    manga_data['anilist_url'], json.dumps(manga_data['adaptations'])
+                    manga_data['tags'], manga_data['start_date'], 
+                    manga_data['end_date'], manga_data['status'], 
+                    manga_data['country_of_origin'], manga_data['total_volumes'], 
+                    manga_data['total_chapters'], manga_data['average_score'], 
+                    manga_data['mean_score'], manga_data['is_adult'], 
+                    manga_data['popularity'], manga_data['cover_image_url'], 
+                    manga_data['cover_image_s3_key'], manga_data['anilist_url'], 
+                    json.dumps(manga_data['adaptations'])
                 ))
                 
                 manga_id = cur.fetchone()[0]
@@ -678,6 +682,7 @@ class MangaScraper:
                 return inserted
                 
         except Exception as e:
+            print(f"    ✗ Error inserting volume: {e}")
             self.conn.rollback()
             return False
     
@@ -723,7 +728,6 @@ class MangaScraper:
             'artists': artists,
             'genres': manga.get('genres', []),
             'tags': [tag['name'] for tag in manga.get('tags', [])],
-            'serialization': manga.get('serialization'),
             'start_date': self.parse_date(manga.get('startDate')),
             'end_date': self.parse_date(manga.get('endDate')),
             'status': manga.get('status'),
@@ -743,6 +747,8 @@ class MangaScraper:
     def extract_volume_number(self, title: str) -> Optional[int]:
         """Extract volume number from title"""
         import re
+        if not title:
+            return None
         match = re.search(r'Vol\.?\s*(\d+)|Volume\s+(\d+)', title, re.IGNORECASE)
         if match:
             return int(match.group(1) or match.group(2))
@@ -782,16 +788,13 @@ class MangaScraper:
         published_date = None
         pub_date_str = volume_info.get('publishedDate')
         if pub_date_str:
-            try:
-                published_date = datetime.strptime(pub_date_str, '%Y-%m-%d').date()
-            except:
+            # Try multiple date formats
+            for date_format in ['%Y-%m-%d', '%Y-%m', '%Y']:
                 try:
-                    published_date = datetime.strptime(pub_date_str, '%Y-%m').date()
-                except:
-                    try:
-                        published_date = datetime.strptime(pub_date_str, '%Y').date()
-                    except:
-                        pass
+                    published_date = datetime.strptime(pub_date_str, date_format).date()
+                    break
+                except ValueError:
+                    continue
         
         return {
             'title': volume_info.get('title'),
@@ -832,7 +835,7 @@ class MangaScraper:
             if not self.running:
                 break
             
-            # FIXED: Check if we've reached the limit before fetching more
+            # Check if we've reached the limit before fetching more
             current_count = self.get_current_manga_count()
             if current_count >= self.initial_fetch_count:
                 print(f"\n✓ Reached manga limit ({self.initial_fetch_count}), stopping initial scrape")
@@ -847,7 +850,7 @@ class MangaScraper:
                     if not self.running:
                         break
                     
-                    # FIXED: Check limit again before processing each manga
+                    # Check limit again before processing each manga
                     current_count = self.get_current_manga_count()
                     if current_count >= self.initial_fetch_count:
                         print(f"\n✓ Reached manga limit ({self.initial_fetch_count}), stopping")
@@ -870,7 +873,14 @@ class MangaScraper:
                 print(f"Error on page {page}: {e}")
                 errors += 1
         
-        print(f"\nInitial scrape complete: {manga_count} manga, {volume_count} volumes")
+        duration = datetime.now() - start_time
+        print(f"\n{'='*60}")
+        print(f"Initial scrape complete:")
+        print(f"  Manga added: {manga_count}")
+        print(f"  Volumes added: {volume_count}")
+        print(f"  Errors: {errors}")
+        print(f"  Duration: {duration}")
+        print(f"{'='*60}")
     
     def check_for_new_volumes(self, manga_id: int, manga_data: Dict) -> int:
         """Check for new volumes for a manga"""
@@ -921,6 +931,8 @@ class MangaScraper:
     def normalize_title(self, title: str) -> str:
         """Normalize title for comparison"""
         import re
+        if not title:
+            return ""
         # Remove volume numbers, special chars, extra spaces
         title = re.sub(r'Vol\.?\s*\d+|Volume\s+\d+', '', title, flags=re.IGNORECASE)
         title = re.sub(r'[^\w\s]', '', title)
@@ -931,6 +943,9 @@ class MangaScraper:
         """Calculate similarity ratio between two titles"""
         norm1 = self.normalize_title(title1)
         norm2 = self.normalize_title(title2)
+        
+        if not norm1 or not norm2:
+            return 0.0
         
         # Direct comparison
         similarity = SequenceMatcher(None, norm1, norm2).ratio()
@@ -1033,7 +1048,14 @@ class MangaScraper:
                 print(f"  Error: {e}")
                 errors += 1
         
-        print(f"\nUpdate complete: {manga_count} checked, {volume_count} new volumes")
+        duration = datetime.now() - start_time
+        print(f"\n{'='*60}")
+        print(f"Update complete:")
+        print(f"  Manga checked: {manga_count}")
+        print(f"  New volumes: {volume_count}")
+        print(f"  Errors: {errors}")
+        print(f"  Duration: {duration}")
+        print(f"{'='*60}")
     
     def run_continuous(self):
         """Run scraper continuously"""
@@ -1049,17 +1071,14 @@ class MangaScraper:
         
         # Check if initial scrape needed
         try:
-            with self.conn.cursor() as cur:
-                cur.execute("SELECT COUNT(*) FROM manga")
-                manga_count = cur.fetchone()[0]
-                
-                print(f"\nCurrent manga in database: {manga_count}")
-                
-                if manga_count < self.initial_fetch_count:
-                    print(f"Need {self.initial_fetch_count - manga_count} more manga - running initial scrape...")
-                    self.initial_scrape()
-                else:
-                    print(f"✓ Already have {self.initial_fetch_count}+ manga, skipping initial scrape")
+            manga_count = self.get_current_manga_count()
+            print(f"\nCurrent manga in database: {manga_count}")
+            
+            if manga_count < self.initial_fetch_count:
+                print(f"Need {self.initial_fetch_count - manga_count} more manga - running initial scrape...")
+                self.initial_scrape()
+            else:
+                print(f"✓ Already have {self.initial_fetch_count}+ manga, skipping initial scrape")
         except Exception as e:
             print(f"Error checking manga count: {e}")
         
@@ -1116,6 +1135,7 @@ def main():
     ╚══════════════════════════════════════════════════════════╝
     """)
     
+    scraper = None
     try:
         scraper = MangaScraper('config.json')
         scraper.run_continuous()
@@ -1123,8 +1143,10 @@ def main():
         print("\n\nInterrupted by user")
     except Exception as e:
         print(f"\n✗ Fatal error: {e}")
+        import traceback
+        traceback.print_exc()
     finally:
-        if 'scraper' in locals():
+        if scraper:
             scraper.close()
 
 if __name__ == "__main__":
