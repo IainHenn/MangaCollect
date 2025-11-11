@@ -823,6 +823,49 @@ class MangaScraper:
             'thumbnail_s3_key': thumbnail_s3_key
         }
     
+    def fetch_top_manga_from_anilist(self, limit: int) -> List[Dict]:
+        """Fetch exactly the top N manga from AniList by popularity"""
+        print(f"\nFetching top {limit} manga from AniList by popularity...")
+        
+        all_manga = []
+        per_page = 50
+        pages_needed = (limit + per_page - 1) // per_page
+        
+        for page in range(1, pages_needed + 1):
+            if not self.running:
+                break
+            
+            try:
+                remaining = limit - len(all_manga)
+                if remaining <= 0:
+                    break
+                
+                print(f"  Fetching page {page}/{pages_needed} ({remaining} manga remaining)...")
+                data = self.fetch_anilist_manga(page, per_page)
+                manga_list = data['data']['Page']['media']
+                
+                if not manga_list:
+                    print(f"  No more manga returned from AniList")
+                    break
+                
+                # Only take what we need to reach the limit
+                manga_to_add = manga_list[:remaining]
+                all_manga.extend(manga_to_add)
+                
+                print(f"  Retrieved {len(manga_to_add)} manga (total: {len(all_manga)}/{limit})")
+                
+                # Stop if we got fewer than requested (end of results)
+                if len(manga_list) < per_page:
+                    print(f"  AniList returned fewer results than requested, stopping")
+                    break
+                
+            except Exception as e:
+                print(f"  Error fetching page {page}: {e}")
+                # Don't break, try next page
+        
+        print(f"\n✓ Retrieved {len(all_manga)} manga from AniList")
+        return all_manga[:limit]  # Ensure we never exceed limit
+    
     def initial_scrape(self):
         """Initial scrape of top manga - STRICT 500 LIMIT"""
         print("\n" + "="*60)
@@ -834,59 +877,54 @@ class MangaScraper:
         volume_count = 0
         errors = 0
         
-        per_page = 50
-        pages_needed = (self.initial_fetch_count + per_page - 1) // per_page
+        # Check how many we already have
+        current_count = self.get_current_manga_count()
+        if current_count >= self.initial_fetch_count:
+            print(f"✓ Already have {current_count} manga (target: {self.initial_fetch_count})")
+            print("  Skipping initial scrape")
+            return
         
-        for page in range(1, pages_needed + 1):
+        needed = self.initial_fetch_count - current_count
+        print(f"Current manga in DB: {current_count}")
+        print(f"Target: {self.initial_fetch_count}")
+        print(f"Need to add: {needed}")
+        
+        # Fetch EXACTLY the top N manga from AniList
+        manga_list = self.fetch_top_manga_from_anilist(self.initial_fetch_count)
+        
+        if not manga_list:
+            print("✗ No manga retrieved from AniList")
+            return
+        
+        print(f"\nProcessing {len(manga_list)} manga from AniList...")
+        
+        for idx, manga in enumerate(manga_list, 1):
             if not self.running:
                 break
             
-            # Check if we've reached limit BEFORE fetching next page
+            # Check if we've reached limit (in case DB already had some)
             current_count = self.get_current_manga_count()
             if current_count >= self.initial_fetch_count:
-                print(f"\n✓ Reached manga limit ({self.initial_fetch_count}), stopping initial scrape")
+                print(f"\n✓ Reached manga limit ({self.initial_fetch_count}), stopping")
                 break
             
             try:
-                remaining = self.initial_fetch_count - current_count
-                fetch_size = min(per_page, remaining)
+                title = manga['title'].get('romaji') or manga['title'].get('english')
+                print(f"\n[{idx}/{len(manga_list)}] Processing: {title}")
                 
-                print(f"\nFetching page {page}/{pages_needed} ({remaining} manga remaining)...")
-                data = self.fetch_anilist_manga(page, per_page)
-                manga_list = data['data']['Page']['media']
+                manga_data = self.process_manga(manga)
+                manga_id = self.insert_or_update_manga(manga_data)
                 
-                # Only process up to the limit
-                manga_to_process = manga_list[:remaining]
-                
-                for manga in manga_to_process:
-                    if not self.running:
-                        break
+                if manga_id:
+                    # Only fetch volumes if manga was inserted (not just updated)
+                    if self.has_english_release(manga):
+                        volumes = self.check_for_new_volumes(manga_id, manga_data)
+                        volume_count += volumes
+                else:
+                    errors += 1
                     
-                    # Double check limit before each manga
-                    current_count = self.get_current_manga_count()
-                    if current_count >= self.initial_fetch_count:
-                        print(f"\n✓ Reached manga limit ({self.initial_fetch_count}), stopping")
-                        break
-                    
-                    print(f"\n  Processing: {manga['title'].get('romaji')}")
-                    manga_data = self.process_manga(manga)
-                    manga_id = self.insert_or_update_manga(manga_data)
-                    
-                    if manga_id:
-                        # Only fetch volumes if manga was inserted (not just updated)
-                        if self.has_english_release(manga):
-                            volumes = self.check_for_new_volumes(manga_id, manga_data)
-                            volume_count += volumes
-                    else:
-                        errors += 1
-                
-                # If we processed fewer manga than requested, we hit the limit
-                if len(manga_to_process) < len(manga_list):
-                    print(f"\n✓ Reached manga limit ({self.initial_fetch_count}), stopping")
-                    break
-                
             except Exception as e:
-                print(f"Error on page {page}: {e}")
+                print(f"  ✗ Error processing manga: {e}")
                 errors += 1
         
         duration = datetime.now() - start_time
