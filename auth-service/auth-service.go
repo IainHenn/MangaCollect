@@ -12,6 +12,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
@@ -741,6 +742,13 @@ func resetPassword(c *gin.Context) {
 func main() {
 	router := gin.Default()
 
+	router.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"http://localhost:3000"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		AllowCredentials: true,
+	}))
+
 	// auth routes
 	router.POST("/auth/token", authToken)
 	router.POST("/auth/validate", authValidate)
@@ -756,5 +764,5 @@ func main() {
 	router.POST("/users/request-password-reset", requestPasswordReset)
 	router.POST("/users/reset-password", resetPassword)
 
-	router.Run()
+	router.Run(":8080")
 }

@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
@@ -462,6 +463,13 @@ func get_db_conn() (*sql.DB, error) {
 func main() {
 	router := gin.Default()
 
+	router.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"http://localhost:3000"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		AllowCredentials: true,
+	}))
+
 	// Collection endpoints
 	router.POST("/users/:user_id/collection/:volume_id", addToCollection)          // tested
 	router.GET("/users/:user_id/collection/:volume_id", getCollectionVolume)       // tested
@@ -483,5 +491,5 @@ func main() {
 	// Move all volumes for a manga to collection
 	router.POST("/users/:user_id/collection/manga/:manga_id", moveAllMangaToCollection) // tested
 
-	router.Run()
+	router.Run(":8080")
 }

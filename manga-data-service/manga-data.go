@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
@@ -372,6 +373,13 @@ func get_volumes_for_manga(c *gin.Context) {
 func main() {
 	router := gin.Default()
 
+	router.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"http://localhost:3000"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		AllowCredentials: true,
+	}))
+
 	// Manga routes
 	router.GET("/mangas/:manga_id", manga_by_id)
 	router.GET("/mangas", get_mangas)
@@ -379,5 +387,5 @@ func main() {
 	// Volume routes
 	router.GET("/mangas/:manga_id/volumes/:volume_id", volume_for_manga)
 	router.GET("/mangas/:manga_id/volumes", get_volumes_for_manga)
-	router.Run()
+	router.Run(":8080")
 }

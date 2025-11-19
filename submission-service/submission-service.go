@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
@@ -780,6 +781,13 @@ func editSubmission(c *gin.Context) {
 func main() {
 	router := gin.Default()
 
+	router.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"http://localhost:3000"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		AllowCredentials: true,
+	}))
+
 	// User routes
 	router.POST("/api/submissions", createSubmission)                     // body passes in user_id
 	router.GET("/api/submissions/users/:user_id", getSubmissionsFromUser) // gets all submissions from a user
@@ -790,5 +798,5 @@ func main() {
 	router.POST("/api/admin/submissions/:submission_id/reject", rejectSubmission) // reject submission
 	router.PATCH("/api/admin/submissions/:submission_id", editSubmission)         // change submission before approving
 
-	router.Run()
+	router.Run(":8080")
 }
