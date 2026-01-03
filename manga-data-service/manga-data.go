@@ -7,12 +7,19 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 	//"github.com/aws/aws-sdk-go/service/s3"
 )
+
+type Claims struct {
+	UserID   int32  `json:"user_id"`
+	Username string `json:"username"`
+	Email    string `json:"email"`
+	jwt.RegisteredClaims
+}
 
 func get_db_conn() (*sql.DB, error) {
 	db := os.Getenv("DATABASE")
@@ -30,8 +37,33 @@ func get_db_conn() (*sql.DB, error) {
 	return conn, nil
 }
 
+// Helper to validate user from cookie JWT only
+func getUserIDFromCookie(c *gin.Context) (int, bool) {
+	godotenv.Load()
+	tokenString, err := c.Cookie("access_token")
+	if err != nil {
+		c.JSON(401, gin.H{"error": "No token"})
+		return 0, false
+	}
+	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (any, error) {
+		return []byte(os.Getenv("SECRET_KEY")), nil
+	})
+	if err != nil || !token.Valid {
+		c.JSON(401, gin.H{"error": "Invalid token"})
+		return 0, false
+	}
+	claims, ok := token.Claims.(*Claims)
+	if !ok {
+		c.JSON(401, gin.H{"error": "Invalid token claims"})
+		return 0, false
+	}
+	return int(claims.UserID), true
+}
+
 func get_mangas(c *gin.Context) {
 	godotenv.Load()
+
+	fmt.Printf("DEBUG get_mangas: Received path: %s\n", c.Request.URL.Path)
 
 	conn, err := get_db_conn()
 
@@ -204,6 +236,7 @@ func volume_for_manga(c *gin.Context) {
 		PriceAmount    sql.NullFloat64 `json:"price_amount"`
 		PriceCurrency  sql.NullString  `json:"price_currency"`
 		ThumbnailS3Key sql.NullString  `json:"thumbnail_s3_key"`
+		UserColStatus  sql.NullString  `json:"user_col_status"`
 	}
 
 	var volume Volume
@@ -225,12 +258,13 @@ func volume_for_manga(c *gin.Context) {
 			v.description,
 			v.price_amount,
 			v.price_currency,
-			v.thumbnail_s3_key
+			v.thumbnail_s3_key,
+			COALESCE(um.status, NULL) AS user_col_status
 			FROM volumes v
 			JOIN manga m on m.id = v.manga_id
+			LEFT JOIN user_manga um ON um.manga_volume_id = v.id
 			WHERE v.manga_id = $1
-			AND v.id = $2
-			ORDER BY v.volume_number`, mangaId, volumeId)
+			AND v.id = $2`, mangaId, volumeId)
 
 	err = row.Scan(
 		&volume.MangaID,
@@ -251,9 +285,11 @@ func volume_for_manga(c *gin.Context) {
 		&volume.PriceAmount,
 		&volume.PriceCurrency,
 		&volume.ThumbnailS3Key,
+		&volume.UserColStatus,
 	)
 
 	if err != nil {
+		fmt.Print(err)
 		c.JSON(500, gin.H{"error": "Failed to scan row"})
 		return
 	}
@@ -296,11 +332,13 @@ func get_volumes_for_manga(c *gin.Context) {
 		PriceAmount    sql.NullFloat64 `json:"price_amount"`
 		PriceCurrency  sql.NullString  `json:"price_currency"`
 		ThumbnailS3Key sql.NullString  `json:"thumbnail_s3_key"`
+		UserColStatus  sql.NullString  `json:"user_col_status"`
 	}
 
 	var volumes []Volume
 
-	rows, err := conn.Query(`SELECT v.manga_id, 
+	rows, err := conn.Query(`
+		SELECT v.manga_id, 
 			v.id as volume_id,
 			m.title_romaji, 
 			m.title_english, 
@@ -317,15 +355,18 @@ func get_volumes_for_manga(c *gin.Context) {
 			v.description,
 			v.price_amount,
 			v.price_currency,
-			v.thumbnail_s3_key
-			FROM volumes v
-			JOIN manga m on m.id = v.manga_id
-			WHERE v.manga_id = $1
-			ORDER BY v.volume_number`, mangaId)
+			v.thumbnail_s3_key,
+			COALESCE(um.status, NULL) as user_col_status
+		FROM volumes v
+		JOIN manga m on m.id = v.manga_id
+		LEFT JOIN user_manga um ON um.manga_volume_id = v.id
+		WHERE v.manga_id = $1
+		ORDER BY v.volume_number
+	`, mangaId)
 
 	if err != nil {
 		fmt.Println(err)
-		c.JSON(500, gin.H{"error": "Failed to can row!"})
+		c.JSON(500, gin.H{"error": "Failed to scan row!"})
 		return
 	}
 
@@ -351,6 +392,7 @@ func get_volumes_for_manga(c *gin.Context) {
 			&volume.PriceAmount,
 			&volume.PriceCurrency,
 			&volume.ThumbnailS3Key,
+			&volume.UserColStatus,
 		)
 
 		if err != nil {
@@ -370,22 +412,146 @@ func get_volumes_for_manga(c *gin.Context) {
 	c.JSON(200, volumes)
 }
 
+func search(c *gin.Context) {
+	godotenv.Load()
+
+	type SearchBody struct {
+		SearchFrom string `json:"searchFrom"` // collection, wishlist, general
+		By         string `json:"by"`         // manga, volume
+	}
+
+	query := c.Query("query")
+
+	var searchBody SearchBody
+
+	err := c.BindJSON(&searchBody)
+
+	if err != nil {
+		c.JSON(400, gin.H{"success": false, "error": "Invalid request!"})
+		return
+	}
+
+	var userID int
+	if searchBody.SearchFrom != "general" {
+		userIDtemp, ok := getUserIDFromCookie(c)
+		if ok == false {
+			c.JSON(400, gin.H{"success": false, "error": "Invalid request!"})
+			return
+		}
+		userID = userIDtemp
+	}
+
+	conn, err := get_db_conn()
+
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Server error"})
+		return
+	}
+
+	var rows *sql.Rows
+	if searchBody.By == "manga" {
+		var general = true
+		if searchBody.SearchFrom == "collected" || searchBody.SearchFrom == "wishlisted" {
+			general = false
+		} else if searchBody.SearchFrom != "general" {
+			c.JSON(400, gin.H{"error": "Invalid request!"})
+			return
+		}
+		if general == true {
+			rows, err = conn.Query(`SELECT id, title_english FROM manga
+			WHERE similarity(title_english, $1) > 0.1
+			ORDER BY similarity(title_english, $1) DESC`, query)
+			if err != nil {
+				fmt.Println(err)
+				c.JSON(500, gin.H{"error": "Failed to query"})
+				return
+			}
+		} else {
+			rows, err = conn.Query(`SELECT DISTINCT m.id, m.title_english FROM manga m
+			JOIN volumes v on v.manga_id = m.id
+			JOIN user_manga um ON um.manga_volume_id = v.id
+			WHERE um.user_id = $1
+			AND um.status = $2
+			AND similarity(m.title_english, $3) > 0.1
+			ORDER BY similarity(m.title_english, $3) DESC`, userID, searchBody.SearchFrom, query)
+
+			if err != nil {
+				fmt.Println(err)
+				c.JSON(500, gin.H{"error": "Failed to query"})
+				return
+			}
+		}
+	} else if searchBody.By == "volume" {
+		var general = true
+		if searchBody.SearchFrom == "collected" || searchBody.SearchFrom == "wishlisted" {
+			general = false
+		} else if searchBody.SearchFrom != "general" {
+			c.JSON(400, gin.H{"error": "Invalid request!"})
+			return
+		}
+		if general == true {
+			rows, err = conn.Query(`SELECT id, title FROM volumes
+			WHERE similarity(title, $1) > 0.1
+			ORDER BY similarity(title, $1) DESC`, query)
+
+			if err != nil {
+				fmt.Println(err)
+				c.JSON(500, gin.H{"error": "Failed to query"})
+				return
+			}
+		} else {
+			rows, err = conn.Query(`SELECT DISTINCT v.id, v.title FROM volumes v
+			JOIN user_manga um ON um.manga_volume_id = v.id
+			WHERE um.user_id = $1
+			AND um.status = $2
+			AND similarity(v.title, $3) > 0.1
+			ORDER BY similarity(v.title, $3) DESC`, userID, searchBody.SearchFrom, query)
+
+			if err != nil {
+				fmt.Println(err)
+				c.JSON(500, gin.H{"error": "Failed to query"})
+				return
+			}
+		}
+	} else {
+		c.JSON(400, gin.H{"error": "Invalid parameters!"})
+		return
+	}
+
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		var id int
+		var text string
+		err = rows.Scan(&id, &text)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "Scan failed"})
+			return
+		}
+		results = append(results, map[string]interface{}{"id": id, "text": text})
+	}
+
+	c.JSON(200, gin.H{"results": results, "by": searchBody.By, "searchFrom": searchBody.SearchFrom})
+}
+
 func main() {
 	router := gin.Default()
 
-	router.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:3000"},
-		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
-		AllowCredentials: true,
-	}))
+	// Disable automatic redirect for trailing slashes
+	router.RedirectTrailingSlash = false
+	router.RedirectFixedPath = false
 
 	// Manga routes
-	router.GET("/mangas/:manga_id", manga_by_id)
-	router.GET("/mangas", get_mangas)
+	router.GET("/:manga_id", manga_by_id)
+	router.GET("/", get_mangas)
 
 	// Volume routes
-	router.GET("/mangas/:manga_id/volumes/:volume_id", volume_for_manga)
-	router.GET("/mangas/:manga_id/volumes", get_volumes_for_manga)
-	router.Run(":8080")
+	router.GET("/:manga_id/volumes/:volume_id", volume_for_manga)
+	router.GET("/:manga_id/volumes", get_volumes_for_manga)
+
+	// Search route
+	router.POST("/search", search)
+
+	router.Run(":8080") //8081 for testing, 8080 for prod
 }

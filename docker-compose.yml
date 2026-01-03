@@ -1,4 +1,20 @@
 services:
+  # Add nginx as reverse proxy
+  nginx:
+    image: nginx:alpine
+    container_name: nginx-gateway
+    ports:
+      - "8080:80"  # Single entry point for all services
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - auth-service
+      - user-service
+      - submission-service
+      - manga-data-service
+    restart: unless-stopped
+
+
   clamav:
     image: clamav/clamav:latest
     container_name: clamav
@@ -8,26 +24,39 @@ services:
   auth-service:
     build: ./auth-service
     container_name: auth-service
-    ports:
-      - "8081:8080"
+    # Remove port mapping - only accessible via nginx
+    expose:
+      - "8080"
     environment:
-      # Add your DB/config envs here
       - DATABASE=${DATABASE}
       - HOST=${HOST}
       - PORT=${PORT}
       - USER=${USER}
       - PASSWORD=${PASSWORD}
       - SECRET_KEY=${SECRET_KEY}
+      - EMAIL_PASSWORD=${EMAIL_PASSWORD}
+      - EMAIL=${EMAIL}
+      - SMTP=${SMTP}
+      - SMTP_PORT=${SMTP_PORT}
+      - USE_TLS=${USE_TLS}
+      - APP_PASSWORD=${APP_PASSWORD}
+      - FRONTEND_URL=${FRONTEND_URL}
     depends_on:
       - clamav
+    restart: unless-stopped
+
+  # frontend:
+  #   build: ./frontend  # Your React app
+  #   container_name: frontend
+  #   expose:
+  #     - "3000"
 
   user-service:
     build: ./user-service
     container_name: user-service
-    ports:
-      - "8082:8080"
+    expose:
+      - "8080"
     environment:
-      # Add your DB/config envs here
       - DATABASE=${DATABASE}
       - HOST=${HOST}
       - PORT=${PORT}
@@ -36,14 +65,14 @@ services:
       - SECRET_KEY=${SECRET_KEY}
     depends_on:
       - clamav
+    restart: unless-stopped
 
   submission-service:
     build: ./submission-service
     container_name: submission-service
-    ports:
-      - "8083:8080"
+    expose:
+      - "8080"
     environment:
-      # Add your DB/config envs here
       - DATABASE=${DATABASE}
       - HOST=${HOST}
       - PORT=${PORT}
@@ -54,14 +83,14 @@ services:
       - AWS_BUCKET_NAME=${AWS_BUCKET_NAME}
     depends_on:
       - clamav
+    restart: unless-stopped
 
   manga-data-service:
     build: ./manga-data-service
     container_name: manga-data-service
-    ports:
-      - "8084:8080"
+    expose:
+      - "8080"
     environment:
-      # Add your DB/config envs here
       - DATABASE=${DATABASE}
       - HOST=${HOST}
       - PORT=${PORT}
@@ -69,17 +98,4 @@ services:
       - PASSWORD=${PASSWORD}
     depends_on:
       - clamav
-
-  # data-collection-service:
-  #   build: ./data-collection-service
-  #   container_name: data-collection-service
-  #   ports:
-  #     - "8084:8080"
-  #   environment:
-  #     - DATABASE=${DATABASE}
-  #     - HOST=${HOST}
-  #     - PORT=${PORT}
-  #     - USER=${USER}
-  #     - PASSWORD=${PASSWORD}
-  #   depends_on:
-  #     - clamav
+    restart: unless-stopped

@@ -2,9 +2,9 @@ package main
 
 import (
 	//"fmt"
-
 	"database/sql"
 	"fmt"
+	"net/http"
 	"net/smtp"
 	"os"
 	"time"
@@ -12,7 +12,6 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
@@ -569,6 +568,18 @@ func authToken(c *gin.Context) {
 		return
 	}
 
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:  "access_token",
+		Value: tokenString,
+		Path:  "/",
+		// Domain can be omitted or set to localhost
+		Domain:   "localhost",
+		MaxAge:   3 * 3600,
+		HttpOnly: true,
+		Secure:   false,                // false for local dev
+		SameSite: http.SameSiteLaxMode, // Lax works now since same origin
+	})
+
 	c.JSON(200, gin.H{
 		"user_id":  user_id,
 		"username": username,
@@ -742,27 +753,20 @@ func resetPassword(c *gin.Context) {
 func main() {
 	router := gin.Default()
 
-	router.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:3000"},
-		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
-		AllowCredentials: true,
-	}))
-
 	// auth routes
-	router.POST("/auth/token", authToken)
-	router.POST("/auth/validate", authValidate)
+	router.POST("/token", authToken)
+	router.POST("/validate", authValidate)
 
 	// signup
-	router.POST("/users", createUser)
+	router.POST("/register", createUser)
 
 	// email verification
-	router.POST("/users/verify-email", verifyEmail)
-	router.POST("/users/resend-verification", resendEmail)
+	router.POST("/verify-email", verifyEmail)
+	router.POST("/resend-verification", resendEmail)
 
 	// password reset
-	router.POST("/users/request-password-reset", requestPasswordReset)
-	router.POST("/users/reset-password", resetPassword)
+	router.POST("/request-password-reset", requestPasswordReset)
+	router.POST("/reset-password", resetPassword)
 
 	router.Run(":8080")
 }

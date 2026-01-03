@@ -6,7 +6,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
@@ -26,8 +25,8 @@ type Volume struct {
 	ID             int             `json:"id"`
 	MangaID        int             `json:"manga_id"`
 	Title          string          `json:"title"`
-	Subtitle       string          `json:"subtitle"`
-	VolumeNumber   int             `json:"volume_number"`
+	Subtitle       sql.NullString  `json:"subtitle"`
+	VolumeNumber   sql.NullInt64   `json:"volume_number"`
 	ISBN13         sql.NullString  `json:"isbn_13"`
 	ISBN10         sql.NullString  `json:"isbn_10"`
 	PageCount      sql.NullInt64   `json:"page_count"`
@@ -54,15 +53,14 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-// Helper to validate user_id from cookie JWT matches route param
-func validateUserID(c *gin.Context) (int, bool) {
+// Helper to validate user from cookie JWT only
+func getUserIDFromCookie(c *gin.Context) (int, bool) {
 	godotenv.Load()
 	tokenString, err := c.Cookie("access_token")
 	if err != nil {
 		c.JSON(401, gin.H{"error": "No token"})
 		return 0, false
 	}
-
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (any, error) {
 		return []byte(os.Getenv("SECRET_KEY")), nil
 	})
@@ -70,18 +68,9 @@ func validateUserID(c *gin.Context) (int, bool) {
 		c.JSON(401, gin.H{"error": "Invalid token"})
 		return 0, false
 	}
-
 	claims, ok := token.Claims.(*Claims)
 	if !ok {
 		c.JSON(401, gin.H{"error": "Invalid token claims"})
-		return 0, false
-	}
-
-	routeUserID := c.Param("user_id")
-	var routeID int
-	fmt.Sscanf(routeUserID, "%d", &routeID)
-	if claims.UserID != routeID {
-		c.JSON(403, gin.H{"error": "User ID mismatch"})
 		return 0, false
 	}
 	return claims.UserID, true
@@ -89,11 +78,10 @@ func validateUserID(c *gin.Context) (int, bool) {
 
 func addToCollection(c *gin.Context) {
 	godotenv.Load()
-	_, ok := validateUserID(c)
+	userID, ok := getUserIDFromCookie(c)
 	if !ok {
 		return
 	}
-	userID := c.Param("user_id")
 	volumeID := c.Param("volume_id")
 
 	conn, err := get_db_conn()
@@ -116,11 +104,10 @@ func addToCollection(c *gin.Context) {
 
 func getCollectionVolume(c *gin.Context) {
 	godotenv.Load()
-	_, ok := validateUserID(c)
+	userID, ok := getUserIDFromCookie(c)
 	if !ok {
 		return
 	}
-	userID := c.Param("user_id")
 	volumeID := c.Param("volume_id")
 
 	conn, err := get_db_conn()
@@ -154,11 +141,10 @@ func getCollectionVolume(c *gin.Context) {
 
 func deleteCollectionVolume(c *gin.Context) {
 	godotenv.Load()
-	_, ok := validateUserID(c)
+	userID, ok := getUserIDFromCookie(c)
 	if !ok {
 		return
 	}
-	userID := c.Param("user_id")
 	volumeID := c.Param("volume_id")
 
 	conn, err := get_db_conn()
@@ -178,11 +164,10 @@ func deleteCollectionVolume(c *gin.Context) {
 
 func getAllCollection(c *gin.Context) {
 	godotenv.Load()
-	_, ok := validateUserID(c)
+	userID, ok := getUserIDFromCookie(c)
 	if !ok {
 		return
 	}
-	userID := c.Param("user_id")
 
 	conn, err := get_db_conn()
 	if err != nil {
@@ -204,6 +189,9 @@ func getAllCollection(c *gin.Context) {
 		c.JSON(500, gin.H{"error": "Failed to get collection"})
 		return
 	}
+	fmt.Println(userID)
+	fmt.Println(rows)
+
 	defer rows.Close()
 
 	var result []Volume
@@ -215,20 +203,24 @@ func getAllCollection(c *gin.Context) {
 			&v.PriceCurrency, &v.Country, &v.PreviewLink, &v.InfoLink, &v.ThumbnailURL, &v.ThumbnailS3Key,
 			&v.CreatedAt, &v.UpdatedAt,
 		)
+		fmt.Println(v)
 		if err == nil {
 			result = append(result, v)
+		} else {
+			fmt.Println(err)
 		}
 	}
+
+	fmt.Println(result)
 	c.JSON(200, result)
 }
 
 func addToWishlist(c *gin.Context) {
 	godotenv.Load()
-	_, ok := validateUserID(c)
+	userID, ok := getUserIDFromCookie(c)
 	if !ok {
 		return
 	}
-	userID := c.Param("user_id")
 	volumeID := c.Param("volume_id")
 
 	conn, err := get_db_conn()
@@ -253,11 +245,10 @@ func addToWishlist(c *gin.Context) {
 
 func getWishlistVolume(c *gin.Context) {
 	godotenv.Load()
-	_, ok := validateUserID(c)
+	userID, ok := getUserIDFromCookie(c)
 	if !ok {
 		return
 	}
-	userID := c.Param("user_id")
 	volumeID := c.Param("volume_id")
 
 	conn, err := get_db_conn()
@@ -291,11 +282,10 @@ func getWishlistVolume(c *gin.Context) {
 
 func deleteWishlistVolume(c *gin.Context) {
 	godotenv.Load()
-	_, ok := validateUserID(c)
+	userID, ok := getUserIDFromCookie(c)
 	if !ok {
 		return
 	}
-	userID := c.Param("user_id")
 	volumeID := c.Param("volume_id")
 
 	conn, err := get_db_conn()
@@ -315,11 +305,10 @@ func deleteWishlistVolume(c *gin.Context) {
 
 func getAllWishlist(c *gin.Context) {
 	godotenv.Load()
-	_, ok := validateUserID(c)
+	userID, ok := getUserIDFromCookie(c)
 	if !ok {
 		return
 	}
-	userID := c.Param("user_id")
 
 	conn, err := get_db_conn()
 	if err != nil {
@@ -361,11 +350,10 @@ func getAllWishlist(c *gin.Context) {
 
 func moveWishlistToCollection(c *gin.Context) {
 	godotenv.Load()
-	_, ok := validateUserID(c)
+	userID, ok := getUserIDFromCookie(c)
 	if !ok {
 		return
 	}
-	userID := c.Param("user_id")
 	volumeID := c.Param("volume_id")
 
 	conn, err := get_db_conn()
@@ -386,11 +374,10 @@ func moveWishlistToCollection(c *gin.Context) {
 
 func moveAllMangaToWishlist(c *gin.Context) {
 	godotenv.Load()
-	_, ok := validateUserID(c)
+	userID, ok := getUserIDFromCookie(c)
 	if !ok {
 		return
 	}
-	userID := c.Param("user_id")
 	mangaID := c.Param("manga_id")
 
 	conn, err := get_db_conn()
@@ -416,11 +403,10 @@ func moveAllMangaToWishlist(c *gin.Context) {
 
 func moveAllMangaToCollection(c *gin.Context) {
 	godotenv.Load()
-	_, ok := validateUserID(c)
+	userID, ok := getUserIDFromCookie(c)
 	if !ok {
 		return
 	}
-	userID := c.Param("user_id")
 	mangaID := c.Param("manga_id")
 
 	conn, err := get_db_conn()
@@ -444,6 +430,154 @@ func moveAllMangaToCollection(c *gin.Context) {
 	c.JSON(200, gin.H{"success": true})
 }
 
+func getUniqueManga(c *gin.Context) {
+	godotenv.Load()
+	userID, ok := getUserIDFromCookie(c)
+	if !ok {
+		c.JSON(500, gin.H{"error": "Failed to verify user!"})
+		return
+	}
+
+	mangaType := c.Param("type")
+	if mangaType != "wishlisted" && mangaType != "collected" && mangaType != "all" {
+		c.JSON(400, gin.H{"error": "Invalid type"})
+		return
+	}
+
+	conn, err := get_db_conn()
+	if err != nil {
+		c.JSON(500, gin.H{"error": "DB error"})
+		return
+	}
+	defer conn.Close()
+
+	var rows *sql.Rows
+	if mangaType == "all" {
+		rows, err = conn.Query(`
+			SELECT DISTINCT m.id, m.title_english
+			FROM user_manga um
+			JOIN volumes v ON um.manga_volume_id = v.id
+			JOIN manga m ON m.id = v.manga_id
+			WHERE um.user_id = $1
+		`, userID)
+	} else {
+		rows, err = conn.Query(`
+			SELECT DISTINCT m.id, m.title_english
+			FROM user_manga um
+			JOIN volumes v ON um.manga_volume_id = v.id
+			JOIN manga m ON m.id = v.manga_id
+			WHERE um.user_id = $1 and um.status = $2
+		`, userID, mangaType)
+	}
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to get unique manga"})
+		return
+	}
+	defer rows.Close()
+
+	var mangaMap map[string]int = make(map[string]int)
+	for rows.Next() {
+		var mangaID int
+		var mangaTitle string
+		if err := rows.Scan(&mangaID, &mangaTitle); err == nil {
+			mangaMap[mangaTitle] = mangaID
+		}
+	}
+	c.JSON(200, gin.H{"manga": mangaMap})
+}
+
+func getVolumesByMangaAndType(c *gin.Context) {
+	godotenv.Load()
+	userID, ok := getUserIDFromCookie(c)
+	if !ok {
+		return
+	}
+
+	mangaID := c.Param("manga_id")
+	colStatus := c.Param("type")
+
+	// when looking for manga volumes that we DONT have in our collection
+	if colStatus == "neither" {
+		conn, err := get_db_conn()
+		if err != nil {
+			c.JSON(500, gin.H{"error": "DB error"})
+			return
+		}
+		defer conn.Close()
+
+		rows, err := conn.Query(`
+			SELECT v.id as volume_id, v.title as volume_title, v.thumbnail_s3_key
+			FROM volumes v
+			JOIN manga m ON m.id = v.manga_id
+			WHERE m.id = $1
+				AND v.id NOT IN (
+					SELECT um.manga_volume_id
+					FROM user_manga um
+					WHERE um.user_id = $2
+						AND (um.status = 'collected' OR um.status = 'wishlisted')
+				)
+		`, mangaID, userID)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "Failed to get volumes"})
+			return
+		}
+		defer rows.Close()
+
+		type VolumeSummary struct {
+			VolumeID       int            `json:"volume_id"`
+			VolumeTitle    string         `json:"volume_title"`
+			ThumbnailS3Key sql.NullString `json:"thumbnail_s3_key"`
+		}
+
+		var volumes []VolumeSummary
+		for rows.Next() {
+			var v VolumeSummary
+			if err := rows.Scan(&v.VolumeID, &v.VolumeTitle, &v.ThumbnailS3Key); err == nil {
+				volumes = append(volumes, v)
+			}
+		}
+		c.JSON(200, volumes)
+	} else {
+		// Otherwise, of this manga, get the volumes we have wishlisted/collected
+		conn, err := get_db_conn()
+		if err != nil {
+			c.JSON(500, gin.H{"error": "DB error"})
+			return
+		}
+		defer conn.Close()
+
+		rows, err := conn.Query(`
+			SELECT v.id as volume_id, v.title as volume_title, v.thumbnail_s3_key
+			FROM user_manga um
+			JOIN volumes v ON v.id = um.manga_volume_id
+			JOIN manga m ON m.id = v.manga_id
+			WHERE um.status = $1
+				AND um.user_id = $2
+				AND m.id = $3
+		`, colStatus, userID, mangaID)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "Failed to get volumes"})
+			return
+		}
+		defer rows.Close()
+
+		type VolumeSummary struct {
+			VolumeID       int            `json:"volume_id"`
+			VolumeTitle    string         `json:"volume_title"`
+			ThumbnailS3Key sql.NullString `json:"thumbnail_s3_key"`
+		}
+
+		var volumes []VolumeSummary
+		for rows.Next() {
+			var v VolumeSummary
+			if err := rows.Scan(&v.VolumeID, &v.VolumeTitle, &v.ThumbnailS3Key); err == nil {
+				volumes = append(volumes, v)
+			}
+		}
+		c.JSON(200, volumes)
+	}
+}
+
 func get_db_conn() (*sql.DB, error) {
 	db := os.Getenv("DATABASE")
 	host := os.Getenv("HOST")
@@ -463,33 +597,22 @@ func get_db_conn() (*sql.DB, error) {
 func main() {
 	router := gin.Default()
 
-	router.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:3000"},
-		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
-		AllowCredentials: true,
-	}))
+	// Change routes to not require user_id in path
+	router.POST("/collection/:volume_id", addToCollection)
+	router.GET("/collection/:volume_id", getCollectionVolume)
+	router.DELETE("/collection/:volume_id", deleteCollectionVolume)
+	router.GET("/collection", getAllCollection)
 
-	// Collection endpoints
-	router.POST("/users/:user_id/collection/:volume_id", addToCollection)          // tested
-	router.GET("/users/:user_id/collection/:volume_id", getCollectionVolume)       // tested
-	router.DELETE("/users/:user_id/collection/:volume_id", deleteCollectionVolume) // tested
-	router.GET("/users/:user_id/collection", getAllCollection)                     // tested
+	router.POST("/wishlist/:volume_id", addToWishlist)
+	router.GET("/wishlist/:volume_id", getWishlistVolume)
+	router.DELETE("/wishlist/:volume_id", deleteWishlistVolume)
+	router.GET("/wishlist", getAllWishlist)
 
-	// Wishlist endpoints
-	router.POST("/users/:user_id/wishlist/:volume_id", addToWishlist)          // tested
-	router.GET("/users/:user_id/wishlist/:volume_id", getWishlistVolume)       // tested
-	router.DELETE("/users/:user_id/wishlist/:volume_id", deleteWishlistVolume) // tested
-	router.GET("/users/:user_id/wishlist", getAllWishlist)                     // tested
+	router.PUT("/wishlist/:volume_id/collection", moveWishlistToCollection)
+	router.POST("/wishlist/manga/:manga_id", moveAllMangaToWishlist)
+	router.POST("/collection/manga/:manga_id", moveAllMangaToCollection)
 
-	// Moving wishlist item to collection
-	router.PUT("/users/:user_id/wishlist/:volume_id/collection", moveWishlistToCollection) // tested
-
-	// Move all volumes for a manga to wishlist
-	router.POST("/users/:user_id/wishlist/manga/:manga_id", moveAllMangaToWishlist) // tested
-
-	// Move all volumes for a manga to collection
-	router.POST("/users/:user_id/collection/manga/:manga_id", moveAllMangaToCollection) // tested
-
+	router.GET("/collection_type/:type", getUniqueManga)
+	router.GET("/collection_type/:type/:manga_id", getVolumesByMangaAndType)
 	router.Run(":8080")
 }
