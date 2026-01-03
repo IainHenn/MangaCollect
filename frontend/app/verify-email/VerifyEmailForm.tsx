@@ -18,7 +18,7 @@ export default function VerifyEmailForm() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setMessage("");
-    const res = await fetch("http://localhost:8081/users/verify-email", {
+    const res = await fetch("http://localhost:8080/users/verify-email", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, token }),

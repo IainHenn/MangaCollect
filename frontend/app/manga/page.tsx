@@ -13,6 +13,49 @@ export default function MangaListPage() {
   const [loading, setLoading] = useState(true);
   const router = useRouter();
 
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchType, setSearchType] = useState("manga");
+  const [searchResults, setSearchResults] = useState([]);
+
+  const [debouncedQuery, setDebouncedQuery] = useState(searchQuery);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(searchQuery), 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    if (!searchQuery) {
+      setSearchResults([]);
+      return;
+    }
+
+    const controller = new AbortController(); // cancel previous requests
+    const signal = controller.signal;
+
+    fetch(`http://localhost:8080/mangas/search?query=${searchQuery}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        searchFrom: "general",
+        by: searchType,
+      }),
+      signal,
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.results) setSearchResults(data.results);
+        else setSearchResults([]);
+      })
+      .catch((err) => {
+        if (err.name !== "AbortError") console.error(err);
+      });
+
+    return () => controller.abort(); // cleanup previous fetch
+  }, [searchQuery, searchType]);
+
   useEffect(() => {
     fetch("http://localhost:8080/mangas/")
       .then(res => res.json())
@@ -39,6 +82,53 @@ export default function MangaListPage() {
   return (
     <>
       <div className="min-h-screen bg-black text-white flex flex-col items-center py-8 relative">
+        
+        <div className="border border-white rounded-lg p-6 relative w-full max-w-md">
+          <select
+            value={searchType}
+            onChange={(e) => setSearchType(e.target.value)}
+            className="
+              mb-2 w-full p-2 rounded-lg
+              bg-black text-white
+              border border-white
+              focus:outline-none focus:ring-2 focus:ring-white
+              appearance-none
+              cursor-pointer
+            "
+          >
+            <option value="manga">Manga</option>
+            <option value="volume">Volume</option>
+          </select>
+          
+          <input
+            id="search"
+            type="text"
+            placeholder="Search..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full p-2 rounded text-white"
+          />
+
+          {/* Results dropdown */}
+          {searchResults.length > 0 && searchQuery.length > 0 && (
+            <div className="absolute top-full left-0 mt-1 w-full bg-black border border-white rounded-lg max-h-60 overflow-y-auto z-10">
+              {searchResults.map((result: any) => (
+                <div
+                  key={result.id}
+                  className="p-2 hover:bg-gray-700 cursor-pointer"
+                  onClick={() => {
+                    setSearchQuery(result.text || "");
+                    router.push(`/manga/${result.id}`);
+                  }}
+                >
+                  {result.text || "Untitled"}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+
         <div className="absolute top-8 right-8">
           <button
             className="px-6 py-3 rounded bg-blue-700 text-white font-semibold shadow hover:bg-blue-800 transition"
