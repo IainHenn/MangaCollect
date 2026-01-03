@@ -490,7 +490,7 @@ func search(c *gin.Context) {
 			return
 		}
 		if general == true {
-			rows, err = conn.Query(`SELECT id, title FROM volumes
+			rows, err = conn.Query(`SELECT id, manga_id, title FROM volumes
 			WHERE similarity(title, $1) > 0.1
 			ORDER BY similarity(title, $1) DESC`, query)
 
@@ -500,7 +500,7 @@ func search(c *gin.Context) {
 				return
 			}
 		} else {
-			rows, err = conn.Query(`SELECT DISTINCT v.id, v.title FROM volumes v
+			rows, err = conn.Query(`SELECT DISTINCT v.id, v.manga_id, v.title FROM volumes v
 			JOIN user_manga um ON um.manga_volume_id = v.id
 			WHERE um.user_id = $1
 			AND um.status = $2
@@ -521,17 +521,31 @@ func search(c *gin.Context) {
 	defer rows.Close()
 
 	var results []map[string]interface{}
-	for rows.Next() {
-		var id int
-		var text string
-		err = rows.Scan(&id, &text)
-		if err != nil {
-			c.JSON(500, gin.H{"error": "Scan failed"})
-			return
-		}
-		results = append(results, map[string]interface{}{"id": id, "text": text})
-	}
 
+	if searchBody.By == "volume" {
+		for rows.Next() {
+			var id int
+			var manga_id int
+			var text string
+			err = rows.Scan(&id, &manga_id, &text)
+			if err != nil {
+				c.JSON(500, gin.H{"error": "Scan failed"})
+				return
+			}
+			results = append(results, map[string]interface{}{"id": id, "manga_id": manga_id, "text": text})
+		}
+	} else if searchBody.By == "manga" {
+		for rows.Next() {
+			var id int
+			var text string
+			err = rows.Scan(&id, &text)
+			if err != nil {
+				c.JSON(500, gin.H{"error": "Scan failed"})
+				return
+			}
+			results = append(results, map[string]interface{}{"id": id, "text": text})
+		}
+	}
 	c.JSON(200, gin.H{"results": results, "by": searchBody.By, "searchFrom": searchBody.SearchFrom})
 }
 

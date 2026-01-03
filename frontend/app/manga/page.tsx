@@ -118,7 +118,11 @@ export default function MangaListPage() {
                   className="p-2 hover:bg-gray-700 cursor-pointer"
                   onClick={() => {
                     setSearchQuery(result.text || "");
-                    router.push(`/manga/${result.id}`);
+                    if (searchType == "manga") {
+                      router.push(`/manga/${result.id}`)
+                    } else {
+                      router.push(`/manga/${result.manga_id}/volume/${result.id}`)
+                    }
                   }}
                 >
                   {result.text || "Untitled"}
