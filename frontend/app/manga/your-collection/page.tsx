@@ -25,6 +25,9 @@ export default function UserCollectionPage() {
 
   const [debouncedQuery, setDebouncedQuery] = useState(searchQuery);
 
+  const [unauthorized, setUnauthorized] = useState(false);
+
+
 
 
 
@@ -74,8 +77,17 @@ export default function UserCollectionPage() {
   useEffect(() => {
     setLoading(true);
     fetch(`http://localhost:8080/collection_type/${collectionType}`, { credentials: "include" })
-      .then(res => res.json())
+      .then(res => {
+        if(res.status == 401) {
+          setUnauthorized(true);
+          return null
+        }
+        return res.json()
+      })
       .then(data => {
+        if(!data){
+          return;
+        }
         if (data.manga && typeof data.manga === "object") {
           const mangaArray = Object.entries(data.manga).map(([title, id]) => ({
             id: id as number,
@@ -92,8 +104,18 @@ export default function UserCollectionPage() {
         console.error("Failed to fetch manga", err);
         setMangaList([]);
       })
-      .finally(() => setLoading(false));
+      .finally(() => {if (!unauthorized) setLoading(false); });
   }, [collectionType]);
+
+  useEffect(() => {
+  if (unauthorized) {
+    const timer = setTimeout(() => {
+      router.push("/auth/signup");
+    }, 800); // short delay so spinner is visible
+
+    return () => clearTimeout(timer);
+  }
+}, [unauthorized, router]);
 
   // Fetch volumes for selected manga
   useEffect(() => {
@@ -276,7 +298,7 @@ export default function UserCollectionPage() {
         </button>
       </div>
 
-      {loading ? (
+      {(loading || unauthorized ) ? (
         <div className="flex items-center justify-center h-64">
           <svg className="animate-spin h-12 w-12 text-white" viewBox="0 0 24 24">
             <circle
