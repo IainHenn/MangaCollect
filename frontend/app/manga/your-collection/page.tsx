@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 
 type MangaEntry = { id: number; title_english: string };
@@ -27,9 +27,9 @@ export default function UserCollectionPage() {
 
   const [unauthorized, setUnauthorized] = useState(false);
 
-
-
-
+  // For highlighting searched volume
+  const [highlightedVolumeId, setHighlightedVolumeId] = useState<number | null>(null);
+  const volumeRefs = useRef<{ [key: number]: HTMLDivElement | null }>({});
 
   const router = useRouter();
 
@@ -54,8 +54,9 @@ export default function UserCollectionPage() {
       headers: {
         "Content-Type": "application/json",
       },
+      credentials: 'include',
       body: JSON.stringify({
-        searchFrom: "general",
+        searchFrom: collectionType,
         by: searchType,
       }),
       signal,
@@ -145,6 +146,30 @@ export default function UserCollectionPage() {
       .finally(() => setLoading(false));
   }, [selectedManga, collectionType]);
 
+  // Scroll to highlighted volume when volumes are loaded
+  useEffect(() => {
+    if (highlightedVolumeId && volumeRefs.current[highlightedVolumeId]) {
+      const timer = setTimeout(() => {
+        volumeRefs.current[highlightedVolumeId]?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'center'
+        });
+      }, 100); // Small delay to ensure DOM is ready
+      
+      return () => clearTimeout(timer);
+    }
+  }, [highlightedVolumeId, volumes]);
+
+  // Clear highlight after 3 seconds
+  useEffect(() => {
+    if (highlightedVolumeId) {
+      const timer = setTimeout(() => {
+        setHighlightedVolumeId(null);
+      }, 3000);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [highlightedVolumeId]);
 
   // Remove volume from collection
   async function removeVolume(volumeID: number) {
@@ -260,12 +285,27 @@ export default function UserCollectionPage() {
                 key={result.id}
                 className="p-2 hover:bg-gray-700 cursor-pointer"
                 onClick={() => {
-                  setSearchQuery(result.text || "");
+                  setSearchQuery("");
+                  setSearchResults([]);
 
                   if(searchType == "manga"){
-                    setSelectedManga({"id": result.id, "title_english": result.text})
+                    // Find the manga in the current mangaList
+                    const manga = mangaList.find(m => m.id === result.id);
+                    if (manga) {
+                      setSelectedManga(manga);
+                    } else {
+                      setSelectedManga({"id": result.id, "title_english": result.text});
+                    }
+                    setHighlightedVolumeId(null);
                   } else if (searchType == "volume") {
-                    setSelectedManga({"id": result.manga_id, "title_english": result.text})
+                    // Find the manga in the current mangaList
+                    const manga = mangaList.find(m => m.id === result.manga_id);
+                    if (manga) {
+                      setSelectedManga(manga);
+                    } else {
+                      setSelectedManga({"id": result.manga_id, "title_english": result.text});
+                    }
+                    setHighlightedVolumeId(result.id);
                   }
                 }}
               >
@@ -378,10 +418,17 @@ export default function UserCollectionPage() {
                           : thumbKey
                           ? `https://manga-collection-images.s3.amazonaws.com/${thumbKey}`
                           : "";
+                      const isHighlighted = highlightedVolumeId === v.volume_id;
+                      
                       return (
                         <div
                           key={v.volume_id}
-                          className="bg-[#222] rounded-xl p-4 flex flex-col items-center border border-white hover:shadow-lg transition"
+                          ref={(el) => { volumeRefs.current[v.volume_id] = el; }}
+                          className={`bg-[#222] rounded-xl p-4 flex flex-col items-center border hover:shadow-lg transition ${
+                            isHighlighted 
+                              ? "border-yellow-400 border-2 shadow-lg shadow-yellow-400/50" 
+                              : "border-white"
+                          }`}
                         >
                           <button
                             onClick={() => router.push(`/manga/${selectedManga.id}/volume/${v.volume_id}`)}

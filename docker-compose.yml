@@ -96,6 +96,7 @@ services:
       - PORT=${PORT}
       - USER=${USER}
       - PASSWORD=${PASSWORD}
+      - GIN_MODE=debug
     depends_on:
       - clamav
     restart: unless-stopped

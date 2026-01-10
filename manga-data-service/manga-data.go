@@ -42,6 +42,7 @@ func getUserIDFromCookie(c *gin.Context) (int, bool) {
 	godotenv.Load()
 	tokenString, err := c.Cookie("access_token")
 	if err != nil {
+		fmt.Println(err)
 		c.JSON(401, gin.H{"error": "No token"})
 		return 0, false
 	}
@@ -413,6 +414,7 @@ func get_volumes_for_manga(c *gin.Context) {
 }
 
 func search(c *gin.Context) {
+	fmt.Println("test")
 	godotenv.Load()
 
 	type SearchBody struct {
@@ -426,19 +428,25 @@ func search(c *gin.Context) {
 
 	err := c.BindJSON(&searchBody)
 
+	fmt.Println("after")
+
 	if err != nil {
-		c.JSON(400, gin.H{"success": false, "error": "Invalid request!"})
+		fmt.Println(err)
+		c.JSON(400, gin.H{"success": false, "error": "Invalid request!", "debug": err})
 		return
 	}
 
 	var userID int
 	if searchBody.SearchFrom != "general" {
 		userIDtemp, ok := getUserIDFromCookie(c)
-		if ok == false {
-			c.JSON(400, gin.H{"success": false, "error": "Invalid request!"})
+		if !ok {
 			return
 		}
 		userID = userIDtemp
+	}
+
+	if c.IsAborted() {
+		return
 	}
 
 	conn, err := get_db_conn()
@@ -454,6 +462,7 @@ func search(c *gin.Context) {
 		if searchBody.SearchFrom == "collected" || searchBody.SearchFrom == "wishlisted" {
 			general = false
 		} else if searchBody.SearchFrom != "general" {
+			fmt.Println(err)
 			c.JSON(400, gin.H{"error": "Invalid request!"})
 			return
 		}
@@ -467,13 +476,14 @@ func search(c *gin.Context) {
 				return
 			}
 		} else {
-			rows, err = conn.Query(`SELECT DISTINCT m.id, m.title_english FROM manga m
-			JOIN volumes v on v.manga_id = m.id
-			JOIN user_manga um ON um.manga_volume_id = v.id
-			WHERE um.user_id = $1
-			AND um.status = $2
-			AND similarity(m.title_english, $3) > 0.1
-			ORDER BY similarity(m.title_english, $3) DESC`, userID, searchBody.SearchFrom, query)
+			rows, err = conn.Query(`SELECT DISTINCT ON (v.manga_id, sim) v.id, v.manga_id, m.title_english, similarity(v.title, $3) as sim 
+				FROM volumes v
+				JOIN user_manga um ON um.manga_volume_id = v.id
+				JOIN manga m ON m.id = v.manga_id
+				WHERE um.user_id = $1
+				AND um.status = $2
+				AND similarity(v.title, $3) > 0.1
+				ORDER BY sim DESC`, userID, searchBody.SearchFrom, query)
 
 			if err != nil {
 				fmt.Println(err)
@@ -486,6 +496,7 @@ func search(c *gin.Context) {
 		if searchBody.SearchFrom == "collected" || searchBody.SearchFrom == "wishlisted" {
 			general = false
 		} else if searchBody.SearchFrom != "general" {
+			fmt.Println(err)
 			c.JSON(400, gin.H{"error": "Invalid request!"})
 			return
 		}
@@ -500,7 +511,7 @@ func search(c *gin.Context) {
 				return
 			}
 		} else {
-			rows, err = conn.Query(`SELECT DISTINCT v.id, v.manga_id, v.title FROM volumes v
+			rows, err = conn.Query(`SELECT DISTINCT v.id, v.manga_id, v.title, similarity(v.title, $3) as sim FROM volumes v
 			JOIN user_manga um ON um.manga_volume_id = v.id
 			WHERE um.user_id = $1
 			AND um.status = $2
@@ -527,7 +538,8 @@ func search(c *gin.Context) {
 			var id int
 			var manga_id int
 			var text string
-			err = rows.Scan(&id, &manga_id, &text)
+			var similarity float32
+			err = rows.Scan(&id, &manga_id, &text, &similarity)
 			if err != nil {
 				c.JSON(500, gin.H{"error": "Scan failed"})
 				return
@@ -537,13 +549,16 @@ func search(c *gin.Context) {
 	} else if searchBody.By == "manga" {
 		for rows.Next() {
 			var id int
+			var manga_id int
 			var text string
-			err = rows.Scan(&id, &text)
+			var similarity float32
+			err = rows.Scan(&id, &manga_id, &text, &similarity)
 			if err != nil {
+				fmt.Println(err)
 				c.JSON(500, gin.H{"error": "Scan failed"})
 				return
 			}
-			results = append(results, map[string]interface{}{"id": id, "text": text})
+			results = append(results, map[string]interface{}{"id": manga_id, "text": text})
 		}
 	}
 	c.JSON(200, gin.H{"results": results, "by": searchBody.By, "searchFrom": searchBody.SearchFrom})
