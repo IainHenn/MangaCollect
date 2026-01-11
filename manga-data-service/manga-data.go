@@ -457,8 +457,9 @@ func search(c *gin.Context) {
 	}
 
 	var rows *sql.Rows
+	var general = true
+
 	if searchBody.By == "manga" {
-		var general = true
 		if searchBody.SearchFrom == "collected" || searchBody.SearchFrom == "wishlisted" {
 			general = false
 		} else if searchBody.SearchFrom != "general" {
@@ -492,7 +493,6 @@ func search(c *gin.Context) {
 			}
 		}
 	} else if searchBody.By == "volume" {
-		var general = true
 		if searchBody.SearchFrom == "collected" || searchBody.SearchFrom == "wishlisted" {
 			general = false
 		} else if searchBody.SearchFrom != "general" {
@@ -539,12 +539,24 @@ func search(c *gin.Context) {
 			var manga_id int
 			var text string
 			var similarity float32
-			err = rows.Scan(&id, &manga_id, &text, &similarity)
-			if err != nil {
-				c.JSON(500, gin.H{"error": "Scan failed"})
-				return
+
+			if general != true {
+				err = rows.Scan(&id, &manga_id, &text, &similarity)
+				if err != nil {
+					fmt.Println(err)
+					c.JSON(500, gin.H{"error": "Scan failed"})
+					return
+				}
+				results = append(results, map[string]interface{}{"id": id, "manga_id": manga_id, "text": text})
+			} else {
+				err = rows.Scan(&id, &manga_id, &text)
+				if err != nil {
+					fmt.Println(err)
+					c.JSON(500, gin.H{"error": "Scan failed"})
+					return
+				}
+				results = append(results, map[string]interface{}{"id": id, "manga_id": manga_id, "text": text})
 			}
-			results = append(results, map[string]interface{}{"id": id, "manga_id": manga_id, "text": text})
 		}
 	} else if searchBody.By == "manga" {
 		for rows.Next() {
@@ -552,13 +564,24 @@ func search(c *gin.Context) {
 			var manga_id int
 			var text string
 			var similarity float32
-			err = rows.Scan(&id, &manga_id, &text, &similarity)
-			if err != nil {
-				fmt.Println(err)
-				c.JSON(500, gin.H{"error": "Scan failed"})
-				return
+
+			if general != true {
+				err = rows.Scan(&id, &manga_id, &text, &similarity)
+				if err != nil {
+					fmt.Println(err)
+					c.JSON(500, gin.H{"error": "Scan failed"})
+					return
+				}
+				results = append(results, map[string]interface{}{"id": manga_id, "text": text})
+			} else {
+				err = rows.Scan(&manga_id, &text)
+				if err != nil {
+					fmt.Println(err)
+					c.JSON(500, gin.H{"error": "Scan failed"})
+					return
+				}
+				results = append(results, map[string]interface{}{"id": manga_id, "text": text})
 			}
-			results = append(results, map[string]interface{}{"id": manga_id, "text": text})
 		}
 	}
 	c.JSON(200, gin.H{"results": results, "by": searchBody.By, "searchFrom": searchBody.SearchFrom})
