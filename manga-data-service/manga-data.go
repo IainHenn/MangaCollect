@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -64,7 +65,17 @@ func getUserIDFromCookie(c *gin.Context) (int, bool) {
 func get_mangas(c *gin.Context) {
 	godotenv.Load()
 
-	fmt.Printf("DEBUG get_mangas: Received path: %s\n", c.Request.URL.Path)
+	limitStr := c.DefaultQuery("limit", "20")
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil {
+		limit = 20
+	}
+
+	offsetStr := c.DefaultQuery("offset", "0")
+	offset, err := strconv.Atoi(offsetStr)
+	if err != nil {
+		offset = 0
+	}
 
 	conn, err := get_db_conn()
 
@@ -84,7 +95,7 @@ func get_mangas(c *gin.Context) {
 			status,
 			total_volumes,
 			total_chapters, cover_image_s3_key FROM manga
-			ORDER BY POPULARITY DESC`)
+			ORDER BY POPULARITY DESC LIMIT $1 OFFSET $2`, limit+1, offset)
 
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Failed to query database"})
@@ -131,7 +142,21 @@ func get_mangas(c *gin.Context) {
 		mangas = append(mangas, m)
 	}
 
-	c.JSON(200, mangas)
+	fmt.Println(len(mangas))
+	fmt.Println(limit)
+	hasMore := len(mangas) > limit
+
+	type ResponseStruct struct {
+		Mangas  []Manga `json:"mangas"`
+		HasMore bool    `json:"hasMore"`
+	}
+
+	data := ResponseStruct{
+		Mangas:  mangas[1:],
+		HasMore: hasMore,
+	}
+
+	c.JSON(200, data)
 }
 
 func manga_by_id(c *gin.Context) {

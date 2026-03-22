@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 
 type Manga = {
@@ -12,6 +12,10 @@ export default function MangaListPage() {
   const [manga, setManga] = useState<Manga[]>([]);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
+
+  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [searchType, setSearchType] = useState("manga");
@@ -56,28 +60,63 @@ export default function MangaListPage() {
     return () => controller.abort(); // cleanup previous fetch
   }, [searchQuery, searchType]);
 
+  // Fetch mangas with offset; backend returns { mangas: [...], hasMore: true/false }
+  async function fetchMangas(nextOffset = 0, append = false) {
+    try {
+      if (append) setLoadingMore(true);
+      else setLoading(true);
+      const res = await fetch(`http://localhost:8080/mangas?offset=${nextOffset}`);
+      const data = await res.json();
+
+      const items = Array.isArray(data.mangas) ? data.mangas : [];
+      const normalized = items.map((m: any) => ({
+        ...m,
+        title_english:
+          m.title_english && typeof m.title_english === "object" && "String" in m.title_english
+            ? m.title_english.String
+            : typeof m.title_english === "string"
+            ? m.title_english
+            : "",
+      }));
+
+      setManga(prev => (append ? [...prev, ...normalized] : normalized));
+      setHasMore(Boolean(data.hasMore));
+      setOffset(nextOffset);
+    } catch (err) {
+      console.error(err);
+      if (!append) setManga([]);
+    } finally {
+      if (append) setLoadingMore(false);
+      else setLoading(false);
+    }
+  }
+
   useEffect(() => {
-    fetch("http://localhost:8080/mangas/")
-      .then(res => res.json())
-      .then(data => {
-        // Unwrap title_english if it's an object with {String, Valid}
-        setManga(
-          Array.isArray(data)
-            ? data.map(m => ({
-                ...m,
-                title_english:
-                  m.title_english && typeof m.title_english === "object" && "String" in m.title_english
-                    ? m.title_english.String
-                    : typeof m.title_english === "string"
-                    ? m.title_english
-                    : "",
-              }))
-            : []
-        );
-      })
-      .catch(() => setManga([]))
-      .finally(() => setLoading(false));
+    fetchMangas(0, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Infinite scroll: observe a sentinel at the bottom and load more when visible
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!sentinelRef.current) return;
+    const el = sentinelRef.current;
+    const obs = new IntersectionObserver(
+      entries => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting && hasMore && !loading && !loadingMore) {
+            // load next page, append
+            fetchMangas(offset + 20, true);
+          }
+        });
+      },
+      { root: null, rootMargin: "200px", threshold: 0.1 }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+    // include the deps that should re-create observer when pagination state changes
+  }, [hasMore, loading, loadingMore, offset]);
 
   function handleTicket(manga_id){
     router.push(`/manga/ticket-request/${manga_id}`)
@@ -215,6 +254,19 @@ export default function MangaListPage() {
               );
             })}
           </div>
+        )}
+        {/* Infinite scroll sentinel + loading indicator */}
+        <div ref={sentinelRef} className="w-full h-1" />
+        {loadingMore && (
+          <div className="flex items-center justify-center py-4">
+            <svg className="animate-spin h-8 w-8 text-white" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+            </svg>
+          </div>
+        )}
+        {!hasMore && !loadingMore && (
+          <div className="mt-6 text-sm text-gray-400">No more results</div>
         )}
       </div>
     </>
