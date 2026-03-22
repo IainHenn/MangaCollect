@@ -48,8 +48,7 @@ type UserSubmissionFetch struct {
 // verifyImage scans a multipart image for viruses using ClamAV.
 // It takes an io.Reader (from multipart.File) and returns (bool, error).
 func verifyImage(file io.Reader) (bool, error) {
-	clamdClient := clamd.NewClamd("tcp://127.0.0.1:3310") // Change to your ClamAV socket if needed
-
+	clamdClient := clamd.NewClamd("tcp://clamav:3310")
 	// Read the file into a buffer for streaming
 	buf := new(bytes.Buffer)
 	_, err := io.Copy(buf, file)
@@ -277,6 +276,7 @@ func createSubmission(c *gin.Context) {
 	// Virus scan
 	isSafe, err := verifyImage(bytes.NewReader(buf.Bytes()))
 	if err != nil || !isSafe {
+		fmt.Println(err)
 		c.JSON(400, gin.H{"error": "Image failed security checks"})
 		return
 	}
@@ -331,8 +331,8 @@ func createSubmission(c *gin.Context) {
 	defer conn.Close()
 
 	_, err = conn.Exec(
-		`INSERT INTO manga_volume_submissions (submitter_user_id, manga_id, volume_title, volume_number, submission_notes, cover_image_url)
-		 VALUES ($1, $2, $3, $4, $5, $6)`,
+		`INSERT INTO manga_volume_submissions (submitter_user_id, manga_id, volume_title, volume_number, submission_notes, cover_image_url, type)
+		 VALUES ($1, $2, $3, $4, $5, $6, 'CREATE')`,
 		userID, mangaID, volumeTitle, volumeNumber, submissionNotes, imagePath)
 	if err != nil {
 		fmt.Println(err)
