@@ -7,11 +7,14 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Install air for hot reload
-RUN go install github.com/cosmtrek/air@latest || true
+# Install air for hot reload, symlink it to a global bin
+RUN go install github.com/cosmtrek/air@latest || true \
+ && ln -sf "$(go env GOPATH)/bin/air" /usr/local/bin/air || true
+ENV PATH="/usr/local/bin:/go/bin:/usr/local/go/bin:${PATH}"
 
 COPY . .
 
 EXPOSE 8080
 
-CMD ["sh","-c","if [ -f .air.toml ]; then $(go env GOPATH)/bin/air; else go run .; fi"]
+# Use air if present, otherwise fall back to go run
+CMD ["sh", "-lc", "if command -v air >/dev/null 2>&1; then air -c .air.toml; \nelif [ -x /usr/local/go/bin/go ]; then /usr/local/go/bin/go run .; \nelif command -v go >/dev/null 2>&1; then go run .; \nelse echo 'air and go not found; sleeping to allow inspection' && sleep 3600; fi"]
