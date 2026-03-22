@@ -1,0 +1,100 @@
+version: '3.8'
+services:
+  clamav:
+    image: clamav/clamav:latest
+    container_name: clamav
+    ports:
+      - "3310:3310"
+
+  auth-service:
+    build:
+      context: ./auth-service
+      dockerfile: Dockerfile.dev
+    container_name: auth-service-dev
+    working_dir: /app
+    volumes:
+      - ./auth-service:/app:delegated
+    ports:
+      - "8081:8080"
+    environment:
+      - DATABASE=${DATABASE}
+      - HOST=${HOST}
+      - PORT=${PORT}
+      - USER=${USER}
+      - PASSWORD=${PASSWORD}
+      - SECRET_KEY=${SECRET_KEY}
+      - EMAIL_PASSWORD=${EMAIL_PASSWORD}
+      - EMAIL=${EMAIL}
+      - SMTP=${SMTP}
+      - SMTP_PORT=${SMTP_PORT}
+      - USE_TLS=${USE_TLS}
+      - APP_PASSWORD=${APP_PASSWORD}
+      - FRONTEND_URL=${FRONTEND_URL}
+    depends_on:
+      - clamav
+
+  user-service:
+    build:
+      context: ./user-service
+      dockerfile: Dockerfile.dev
+    container_name: user-service-dev
+    working_dir: /app
+    volumes:
+      - ./user-service:/app:delegated
+    ports:
+      - "8082:8080"
+    environment:
+      - DATABASE=${DATABASE}
+      - HOST=${HOST}
+      - PORT=${PORT}
+      - USER=${USER}
+      - PASSWORD=${PASSWORD}
+      - SECRET_KEY=${SECRET_KEY}
+    depends_on:
+      - clamav
+
+  submission-service:
+    build:
+      context: ./submission-service
+      dockerfile: Dockerfile.dev
+    container_name: submission-service-dev
+    working_dir: /app
+    volumes:
+      - ./submission-service:/app:delegated
+    ports:
+      - "8083:8080"
+    environment:
+      - DATABASE=${DATABASE}
+      - HOST=${HOST}
+      - PORT=${PORT}
+      - USER=${USER}
+      - PASSWORD=${PASSWORD}
+      - SECRET_KEY=${SECRET_KEY}
+      - AWS_REGION=${AWS_REGION}
+      - AWS_BUCKET_NAME=${AWS_BUCKET_NAME}
+    depends_on:
+      - clamav
+
+  manga-data-service:
+    build:
+      context: ./manga-data-service
+      dockerfile: Dockerfile.dev
+    container_name: manga-data-service-dev
+    working_dir: /app
+    volumes:
+      - ./manga-data-service:/app:delegated
+    ports:
+      - "8084:8080"
+    environment:
+      - DATABASE=${DATABASE}
+      - HOST=${HOST}
+      - PORT=${PORT}
+      - USER=${USER}
+      - PASSWORD=${PASSWORD}
+      - GIN_MODE=debug
+    depends_on:
+      - clamav
+
+networks:
+  default:
+    name: mangacollect-dev

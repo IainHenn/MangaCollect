@@ -1,0 +1,17 @@
+FROM golang:1.24.2-alpine
+
+RUN apk add --no-cache bash git ca-certificates
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Install air for hot reload
+RUN go install github.com/cosmtrek/air@latest || true
+
+COPY . .
+
+EXPOSE 8080
+
+CMD ["sh","-c","if [ -f .air.toml ]; then $(go env GOPATH)/bin/air; else go run .; fi"]
