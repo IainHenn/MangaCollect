@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useRouter, useParams } from "next/navigation";
 
 type Manga = {
@@ -33,32 +33,78 @@ export default function MangaDetailPage() {
   const [manga, setManga] = useState<Manga | null>(null);
   const [volumes, setVolumes] = useState<Volume[]>([]);
   const [panelView, setPanelView] = useState(false);
+  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const volumesContainerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     fetch(`http://localhost:8080/mangas/${manga_id}`)
       .then(res => res.json())
       .then(data => setManga(data))
       .catch(() => setManga(null));
-    fetch(`http://localhost:8080/mangas/${manga_id}/volumes`)
-      .then(res => res.json())
-      .then(data =>
-        Array.isArray(data)
-          ? data.map(v => ({
-              ...v,
-              volume_title: unwrap(v.volume_title),
-              volume_number: unwrap(v.volume_number),
-              thumbnail_s3_key: unwrap(v.thumbnail_s3_key),
-              user_col_status: v.user_col_status && typeof v.user_col_status === "object" && "String" in v.user_col_status
-                ? v.user_col_status.String
-                : typeof v.user_col_status === "string"
-                ? v.user_col_status
-                : "",
-            }))
-          : []
-      )
-      .then(setVolumes)
-      .catch(() => setVolumes([]));
+    // initial load for volumes (pagination-aware)
+    fetchVolumes(0, false);
   }, [manga_id]);
+
+  // Infinite scroll: observe sentinel and load more when visible.
+  useEffect(() => {
+    if (!sentinelRef.current) return;
+    const el = sentinelRef.current;
+
+    // Choose root: for panelView use viewport (null), otherwise observe inside volumes container
+    const root = panelView ? null : volumesContainerRef.current;
+
+    const obs = new IntersectionObserver(
+      entries => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting && hasMore && !loadingMore) {
+            fetchVolumes(offset + 20, true);
+          }
+        });
+      },
+      { root: root || null, rootMargin: "200px", threshold: 0.1 }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [hasMore, loadingMore, offset, panelView, fetchVolumes]);
+
+  // Fetch volumes with offset; backend returns { volumes: [...], hasMore: true/false }
+  async function fetchVolumes(nextOffset = 0, append = false) {
+    try {
+      if (append) setLoadingMore(true);
+      else setLoading(true);
+      const res = await fetch(`http://localhost:8080/mangas/${manga_id}/volumes?offset=${nextOffset}`);
+      const data = await res.json();
+
+      const items = Array.isArray(data.volumes) ? data.volumes : [];
+      const normalized = items.map((v: any) => ({
+        ...v,
+        volume_title: unwrap(v.volume_title),
+        volume_number: unwrap(v.volume_number),
+        thumbnail_s3_key: unwrap(v.thumbnail_s3_key),
+        user_col_status:
+          v.user_col_status && typeof v.user_col_status === "object" && "String" in v.user_col_status
+            ? v.user_col_status.String
+            : typeof v.user_col_status === "string"
+            ? v.user_col_status
+            : "",
+      }));
+
+      setVolumes(prev => (append ? [...prev, ...normalized] : normalized));
+      setHasMore(Boolean(data.hasMore));
+      setOffset(nextOffset);
+    } catch (err) {
+      console.error(err);
+      if (!append) setVolumes([]);
+    } finally {
+      if (append) setLoadingMore(false);
+      else setLoading(false);
+    }
+  }
 
   async function handleAddToCollection(volume_id: number) {
     const res = await fetch(`http://localhost:8080/collection/${volume_id}`, {
@@ -305,6 +351,15 @@ export default function MangaDetailPage() {
             );
           })}
         </div>
+        <div ref={sentinelRef} className="w-full h-1" />
+        {loadingMore && (
+          <div className="flex items-center justify-center py-4">
+            <svg className="animate-spin h-8 w-8 text-white" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+            </svg>
+          </div>
+        )}
         {/* Move bulk action buttons to the bottom of the page */}
         <div className="flex gap-2 mt-8 flex-wrap justify-center w-full fixed bottom-15 left-0 z-10">
           <button
@@ -365,7 +420,7 @@ export default function MangaDetailPage() {
         )}
       </div>
       <div className="w-full">
-        <div className="flex-1 max-h-[80vh] overflow-y-auto w-full">
+        <div ref={volumesContainerRef} className="flex-1 max-h-[80vh] overflow-y-auto w-full">
           <h3 className="text-2xl font-bold mb-4">Volumes</h3>
         <div className="flex flex-col gap-4 w-full">
         {volumes.map(v => {
@@ -474,6 +529,16 @@ export default function MangaDetailPage() {
           );
         })}
           </div>
+        {/* sentinel inside scrollable list */}
+        <div ref={sentinelRef} className="w-full h-1" />
+        {loadingMore && (
+          <div className="flex items-center justify-center py-4">
+            <svg className="animate-spin h-8 w-8 text-white" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+            </svg>
+          </div>
+        )}
         </div>
         {/* Place bulk action buttons inside the volumes div, below the list */}
         <div className="flex gap-2 mt-8 flex-wrap justify-center">

@@ -142,9 +142,18 @@ func get_mangas(c *gin.Context) {
 		mangas = append(mangas, m)
 	}
 
-	fmt.Println(len(mangas))
-	fmt.Println(limit)
 	hasMore := len(mangas) > limit
+
+	// If we fetched one extra row to detect "hasMore", trim the result to the requested limit.
+	result := mangas
+	if hasMore {
+		if len(mangas) >= limit {
+			result = mangas[:limit]
+		} else {
+			// defensive fallback
+			result = mangas
+		}
+	}
 
 	type ResponseStruct struct {
 		Mangas  []Manga `json:"mangas"`
@@ -152,7 +161,7 @@ func get_mangas(c *gin.Context) {
 	}
 
 	data := ResponseStruct{
-		Mangas:  mangas[1:],
+		Mangas:  result,
 		HasMore: hasMore,
 	}
 
@@ -326,6 +335,18 @@ func volume_for_manga(c *gin.Context) {
 func get_volumes_for_manga(c *gin.Context) {
 	mangaId := c.Param("manga_id")
 
+	limitStr := c.DefaultQuery("limit", "20")
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil {
+		limit = 20
+	}
+
+	offsetStr := c.DefaultQuery("offset", "0")
+	offset, err := strconv.Atoi(offsetStr)
+	if err != nil {
+		offset = 0
+	}
+
 	// Check that query params are valid
 	if len(mangaId) == 0 {
 		c.JSON(404, gin.H{"error": "Manga not found!"})
@@ -364,31 +385,33 @@ func get_volumes_for_manga(c *gin.Context) {
 	var volumes []Volume
 
 	rows, err := conn.Query(`
-		SELECT v.manga_id, 
-			v.id as volume_id,
-			m.title_romaji, 
-			m.title_english, 
-			m.title_native, 
-			m.description,
-			v.title as volume_title,
-			v.subtitle as volume_subtitle,
-			v.volume_number,
-			v.isbn_13,
-			v.isbn_10,
-			v.page_count,
-			v.publisher,
-			v.published_date,
-			v.description,
-			v.price_amount,
-			v.price_currency,
-			v.thumbnail_s3_key,
-			COALESCE(um.status, NULL) as user_col_status
-		FROM volumes v
-		JOIN manga m on m.id = v.manga_id
-		LEFT JOIN user_manga um ON um.manga_volume_id = v.id
-		WHERE v.manga_id = $1
-		ORDER BY v.volume_number
-	`, mangaId)
+			SELECT v.manga_id, 
+				v.id as volume_id,
+				m.title_romaji, 
+				m.title_english, 
+				m.title_native, 
+				m.description,
+				v.title as volume_title,
+				v.subtitle as volume_subtitle,
+				v.volume_number,
+				v.isbn_13,
+				v.isbn_10,
+				v.page_count,
+				v.publisher,
+				v.published_date,
+				v.description,
+				v.price_amount,
+				v.price_currency,
+				v.thumbnail_s3_key,
+				COALESCE(um.status, NULL) as user_col_status
+			FROM volumes v
+			JOIN manga m on m.id = v.manga_id
+			LEFT JOIN user_manga um ON um.manga_volume_id = v.id
+			WHERE v.manga_id = $1
+			ORDER BY v.volume_number
+			LIMIT $2
+			OFFSET $3
+	`, mangaId, limit+1, offset)
 
 	if err != nil {
 		fmt.Println(err)
@@ -435,7 +458,23 @@ func get_volumes_for_manga(c *gin.Context) {
 		return
 	}
 
-	c.JSON(200, volumes)
+	type ResponseStruct struct {
+		Volumes []Volume `json:"volumes"`
+		HasMore bool     `json:"hasMore"`
+	}
+
+	hasMore := len(volumes) > limit
+	result := volumes
+	if hasMore && len(volumes) >= limit {
+		result = volumes[:limit]
+	}
+
+	data := ResponseStruct{
+		Volumes: result,
+		HasMore: hasMore,
+	}
+
+	c.JSON(200, data)
 }
 
 func search(c *gin.Context) {
