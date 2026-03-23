@@ -140,12 +140,18 @@ export default function MangaListPage() {
         </div>
 
 
-        <div className="absolute top-8 right-8">
+        <div className="absolute top-8 right-8 flex flex-col sm:flex-row gap-3">
           <button
             className="px-6 py-3 rounded bg-blue-700 text-white font-semibold shadow hover:bg-blue-800 transition"
             onClick={() => router.push("/manga/your-collection")}
           >
             Your Collection and Wishlist
+          </button>
+          <button
+            className="px-6 py-3 rounded bg-emerald-700 text-white font-semibold shadow hover:bg-emerald-800 transition"
+            onClick={() => router.push("/manga/your-submissions")}
+          >
+            Your Submissions
           </button>
         </div>
         <h2 className="text-3xl font-bold mb-6">MangaCollect</h2>

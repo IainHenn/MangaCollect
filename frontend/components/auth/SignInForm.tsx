@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { signIn } from "@/lib/actions";
+import { signInWithUserType } from "@/lib/actions";
+import { clearStoredUserId, setStoredUserId, setStoredUserType } from "@/lib/helpers";
 
 export default function SignInForm() {
   const [email, setEmail] = useState("");
@@ -14,13 +15,27 @@ export default function SignInForm() {
     e.preventDefault();
     setError("");
 
-    const response = await signIn(email, password);
-    if (response.status !== 200) {
-      setError("Invalid credentials");
-      return;
-    }
+    try {
+      const result = await signInWithUserType(email, password);
 
-    router.push("/manga");
+      if (!result.ok) {
+        clearStoredUserId();
+        setError(result.error ?? "Invalid credentials");
+        return;
+      }
+
+      setStoredUserType(result.userType);
+      if (typeof result.userId === "number") {
+        setStoredUserId(result.userId);
+      } else {
+        clearStoredUserId();
+      }
+
+      router.push("/manga");
+    } catch {
+      clearStoredUserId();
+      setError("Failed to sign in");
+    }
   }
 
   return (

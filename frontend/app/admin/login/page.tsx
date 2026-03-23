@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { signInWithUserType } from "@/lib/actions";
-import { clearStoredUserType, setStoredUserType } from "@/lib/helpers";
+import { clearStoredUserId, clearStoredUserType, setStoredUserId, setStoredUserType } from "@/lib/helpers";
 
 export default function AdminLoginPage() {
   const router = useRouter();
@@ -17,6 +17,7 @@ export default function AdminLoginPage() {
     setError("");
     setLoading(true);
     clearStoredUserType();
+    clearStoredUserId();
 
     try {
       const result = await signInWithUserType(email, password);
@@ -27,11 +28,15 @@ export default function AdminLoginPage() {
 
       if (result.userType !== "admin") {
         clearStoredUserType();
+        clearStoredUserId();
         setError("This account is not an admin account.");
         return;
       }
 
       setStoredUserType(result.userType);
+      if (typeof result.userId === "number") {
+        setStoredUserId(result.userId);
+      }
 
       router.push("/admin/requests");
     } catch {

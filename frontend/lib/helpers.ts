@@ -2,6 +2,7 @@ import type { CollectionMangaEntry, SubmissionRequestType, WrappedNumber, Wrappe
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 const USER_TYPE_STORAGE_KEY = "mangacollect_user_type";
+const USER_ID_STORAGE_KEY = "mangacollect_user_id";
 
 export function unwrapString(value: WrappedString): string {
   if (typeof value === "string") return value;
@@ -97,6 +98,28 @@ export function getStoredUserType(): string {
 export function clearStoredUserType(): void {
   if (typeof window === "undefined") return;
   window.localStorage.removeItem(USER_TYPE_STORAGE_KEY);
+}
+
+export function setStoredUserId(userId: number): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(USER_ID_STORAGE_KEY, String(userId));
+}
+
+export function getStoredUserId(): number | null {
+  if (typeof window === "undefined") return null;
+
+  const storedValue = window.localStorage.getItem(USER_ID_STORAGE_KEY);
+  if (!storedValue) return null;
+
+  const parsedValue = Number(storedValue);
+  if (!Number.isFinite(parsedValue) || parsedValue <= 0) return null;
+
+  return parsedValue;
+}
+
+export function clearStoredUserId(): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(USER_ID_STORAGE_KEY);
 }
 
 export function isStoredAdminUser(): boolean {

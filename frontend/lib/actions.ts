@@ -49,7 +49,7 @@ export async function signIn(email: string, password: string): Promise<Response>
 export async function signInWithUserType(
   email: string,
   password: string,
-): Promise<{ ok: boolean; userType: string; error?: string }> {
+): Promise<{ ok: boolean; userType: string; userId?: number; error?: string }> {
   const response = await signIn(email, password);
   const data = await parseJsonSafe<AuthTokenResponse>(response);
 
@@ -57,6 +57,7 @@ export async function signInWithUserType(
     return {
       ok: false,
       userType: "",
+      userId: undefined,
       error: data?.error ?? "Invalid credentials",
     };
   }
@@ -64,6 +65,7 @@ export async function signInWithUserType(
   return {
     ok: true,
     userType: data?.user_type ?? "",
+    userId: data?.user_id,
   };
 }
 
@@ -262,6 +264,44 @@ export async function submitTicket(formData: FormData): Promise<Response> {
     body: formData,
     credentials: "include",
   });
+}
+
+export async function fetchUserSubmissions(userId: number): Promise<{
+  submissions: AdminSubmissionSummary[];
+  unauthorized: boolean;
+  error?: string;
+}> {
+  const response = await apiFetch(`/submissions/users/${encodeURIComponent(String(userId))}`, {
+    method: "GET",
+    credentials: "include",
+  });
+
+  if (response.status === 401 || response.status === 403) {
+    return { submissions: [], unauthorized: true };
+  }
+
+  if (!response.ok) {
+    const data = await parseJsonSafe<ApiStatusResponse>(response);
+    return {
+      submissions: [],
+      unauthorized: false,
+      error: data?.error ?? "Failed to fetch your submissions",
+    };
+  }
+
+  const data = await parseJsonSafe<{ submissions?: AdminSubmissionWire[] }>(response);
+  const normalized = Array.isArray(data?.submissions)
+    ? data.submissions.map(submission => ({
+        ...submission,
+        id: submission.id ?? submission.submission_id,
+        type: submission.type ?? submission.ticket_type,
+      }))
+    : [];
+
+  return {
+    submissions: normalized,
+    unauthorized: false,
+  };
 }
 
 export async function fetchAdminSubmissions(status = "pending"): Promise<{

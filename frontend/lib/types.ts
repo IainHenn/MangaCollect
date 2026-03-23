@@ -17,6 +17,10 @@ export interface AuthPayloads {
 }
 
 export interface AuthTokenResponse {
+  user_id?: number;
+  username?: string;
+  email?: string;
+  token?: string;
   user_type?: string;
   error?: string;
 }
