@@ -36,15 +36,15 @@ type SubmissionRequest struct {
 }
 
 type UserSubmissionFetch struct {
-	TitleEnglish    string `json:"title_english"`
-	MangaID         int    `json:"manga_id"`
-	VolumeTitle     string `json:"volume_title"`
-	VolumeNumber    int    `json:"volume_number"`
-	SubmissionNotes string `json:"submission_notes"`
-	CoverImageURL   string `json:"cover_image_url"`
-	ApprovalStatus  string `json:"approval_status"`
-	SubmissionId    int    `json:"submission_id"`
-	TicketType      string `json:"ticket_type"`
+	TitleEnglish    string  `json:"title_english"`
+	MangaID         int     `json:"manga_id"`
+	VolumeTitle     string  `json:"volume_title"`
+	VolumeNumber    *int    `json:"volume_number"`
+	SubmissionNotes *string `json:"submission_notes"`
+	CoverImageURL   *string `json:"cover_image_url"`
+	ApprovalStatus  string  `json:"approval_status"`
+	SubmissionId    int     `json:"submission_id"`
+	TicketType      string  `json:"ticket_type"`
 }
 
 // verifyImage scans a multipart image for viruses using ClamAV.
@@ -464,6 +464,13 @@ func getSubmissions(c *gin.Context) {
 	if found {
 		conditions = append(conditions, fmt.Sprintf("us.status = $%d", argIndex))
 		args = append(args, status)
+		argIndex++
+	}
+
+	ticket_type, found := c.GetQuery("type")
+	if found {
+		conditions = append(conditions, fmt.Sprintf("us.ticket_type = $%d", argIndex))
+		args = append(args, ticket_type)
 		argIndex++
 	}
 
