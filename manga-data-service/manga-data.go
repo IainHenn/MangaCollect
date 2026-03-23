@@ -523,7 +523,10 @@ func search(c *gin.Context) {
 	var rows *sql.Rows
 	var general = true
 
-	if searchBody.By == "manga" {
+	scenario := searchBody.By
+
+	switch scenario {
+	case "manga":
 		if searchBody.SearchFrom == "collected" || searchBody.SearchFrom == "wishlisted" {
 			general = false
 		} else if searchBody.SearchFrom != "general" {
@@ -540,23 +543,9 @@ func search(c *gin.Context) {
 				c.JSON(500, gin.H{"error": "Failed to query"})
 				return
 			}
-		} else {
-			rows, err = conn.Query(`SELECT DISTINCT ON (v.manga_id, sim) v.id, v.manga_id, m.title_english, similarity(v.title, $3) as sim 
-				FROM volumes v
-				JOIN user_manga um ON um.manga_volume_id = v.id
-				JOIN manga m ON m.id = v.manga_id
-				WHERE um.user_id = $1
-				AND um.status = $2
-				AND similarity(v.title, $3) > 0.1
-				ORDER BY sim DESC`, userID, searchBody.SearchFrom, query)
-
-			if err != nil {
-				fmt.Println(err)
-				c.JSON(500, gin.H{"error": "Failed to query"})
-				return
-			}
 		}
-	} else if searchBody.By == "volume" {
+
+	case "volume":
 		if searchBody.SearchFrom == "collected" || searchBody.SearchFrom == "wishlisted" {
 			general = false
 		} else if searchBody.SearchFrom != "general" {
@@ -588,7 +577,7 @@ func search(c *gin.Context) {
 				return
 			}
 		}
-	} else {
+	default:
 		c.JSON(400, gin.H{"error": "Invalid parameters!"})
 		return
 	}
@@ -597,32 +586,8 @@ func search(c *gin.Context) {
 
 	var results []map[string]interface{}
 
-	if searchBody.By == "volume" {
-		for rows.Next() {
-			var id int
-			var manga_id int
-			var text string
-			var similarity float32
-
-			if general != true {
-				err = rows.Scan(&id, &manga_id, &text, &similarity)
-				if err != nil {
-					fmt.Println(err)
-					c.JSON(500, gin.H{"error": "Scan failed"})
-					return
-				}
-				results = append(results, map[string]interface{}{"id": id, "manga_id": manga_id, "text": text})
-			} else {
-				err = rows.Scan(&id, &manga_id, &text)
-				if err != nil {
-					fmt.Println(err)
-					c.JSON(500, gin.H{"error": "Scan failed"})
-					return
-				}
-				results = append(results, map[string]interface{}{"id": id, "manga_id": manga_id, "text": text})
-			}
-		}
-	} else if searchBody.By == "manga" {
+	switch scenario {
+	case "manga":
 		for rows.Next() {
 			var id int
 			var manga_id int
@@ -645,6 +610,31 @@ func search(c *gin.Context) {
 					return
 				}
 				results = append(results, map[string]interface{}{"id": manga_id, "text": text})
+			}
+		}
+	case "volume":
+		for rows.Next() {
+			var id int
+			var manga_id int
+			var text string
+			var similarity float32
+
+			if general != true {
+				err = rows.Scan(&id, &manga_id, &text, &similarity)
+				if err != nil {
+					fmt.Println(err)
+					c.JSON(500, gin.H{"error": "Scan failed"})
+					return
+				}
+				results = append(results, map[string]interface{}{"id": id, "manga_id": manga_id, "text": text})
+			} else {
+				err = rows.Scan(&id, &manga_id, &text)
+				if err != nil {
+					fmt.Println(err)
+					c.JSON(500, gin.H{"error": "Scan failed"})
+					return
+				}
+				results = append(results, map[string]interface{}{"id": id, "manga_id": manga_id, "text": text})
 			}
 		}
 	}
