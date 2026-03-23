@@ -11,8 +11,9 @@ import {
   removeVolumeFromWishlist,
   searchManga,
 } from "@/lib/actions";
-import { buildS3ImageUrl, mapCollectionManga, unwrapString } from "@/lib/helpers";
+import { mapCollectionManga, unwrapString } from "@/lib/helpers";
 import type { CollectionMangaEntry, CollectionType, SearchResult, Volume } from "@/lib/types";
+import CollectionVolumeCard from "@/components/manga/CollectionVolumeCard";
 
 interface CollectionVolumeEntry {
   volume_id: number;
@@ -285,79 +286,25 @@ export default function UserCollectionPage() {
                     <div className="col-span-full text-gray-400">No volumes found.</div>
                   ) : (
                     volumes.map(v => {
-                      const imgSrc = buildS3ImageUrl(v.thumbnail_s3_key);
                       const isHighlighted = highlightedVolumeId === v.volume_id;
 
                       return (
-                        <div
+                        <CollectionVolumeCard
                           key={v.volume_id}
-                          ref={el => {
-                            volumeRefs.current[v.volume_id] = el;
+                          mangaId={selectedManga.id}
+                          volumeId={v.volume_id}
+                          title={v.volume_title}
+                          thumbnailKey={v.thumbnail_s3_key}
+                          isHighlighted={isHighlighted}
+                          collectionType={collectionType}
+                          onView={(mangaId, volumeId) => router.push(`/manga/${mangaId}/volume/${volumeId}`)}
+                          onMoveToWishlist={moveToWishlist}
+                          onMoveToCollection={moveToCollection}
+                          onRemove={removeVolume}
+                          setVolumeRef={(volumeId, el) => {
+                            volumeRefs.current[volumeId] = el;
                           }}
-                          className={`bg-[#222] rounded-xl p-4 flex flex-col items-center border hover:shadow-lg transition ${
-                            isHighlighted ? "border-yellow-400 border-2 shadow-lg shadow-yellow-400/50" : "border-white"
-                          }`}
-                        >
-                          <button
-                            onClick={() => router.push(`/manga/${selectedManga.id}/volume/${v.volume_id}`)}
-                            className="w-full hover:opacity-80 transition"
-                          >
-                            {imgSrc && (
-                              <img
-                                src={imgSrc}
-                                alt={v.volume_title}
-                                className="w-24 h-36 object-cover mb-2 rounded mx-auto"
-                              />
-                            )}
-                            <span className="font-bold text-lg mb-3 block">{v.volume_title}</span>
-                          </button>
-
-                          <div className="w-full flex flex-col gap-2">
-                            <button
-                              onClick={e => {
-                                e.stopPropagation();
-                                router.push(`/manga/${selectedManga.id}/volume/${v.volume_id}`);
-                              }}
-                              className="w-full px-2 py-1 rounded bg-blue-700 text-white text-sm font-semibold hover:bg-blue-800 transition"
-                            >
-                              View
-                            </button>
-
-                            {collectionType === "collected" && (
-                              <button
-                                onClick={e => {
-                                  e.stopPropagation();
-                                  moveToWishlist(v.volume_id);
-                                }}
-                                className="w-full px-2 py-1 rounded bg-yellow-700 text-white text-sm font-semibold hover:bg-yellow-800 transition"
-                              >
-                                Move to Wishlist
-                              </button>
-                            )}
-
-                            {collectionType === "wishlisted" && (
-                              <button
-                                onClick={e => {
-                                  e.stopPropagation();
-                                  moveToCollection(v.volume_id);
-                                }}
-                                className="w-full px-2 py-1 rounded bg-green-700 text-white text-sm font-semibold hover:bg-green-800 transition"
-                              >
-                                Add to Collection
-                              </button>
-                            )}
-
-                            <button
-                              onClick={e => {
-                                e.stopPropagation();
-                                removeVolume(v.volume_id);
-                              }}
-                              className="w-full px-2 py-1 rounded bg-red-700 text-white text-sm font-semibold hover:bg-red-800 transition"
-                            >
-                              Remove
-                            </button>
-                          </div>
-                        </div>
+                        />
                       );
                     })
                   )}

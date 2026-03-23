@@ -2,8 +2,9 @@
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { fetchMangas as fetchMangaPage, searchManga } from "@/lib/actions";
-import { buildS3ImageUrl, unwrapString } from "@/lib/helpers";
+import { unwrapString } from "@/lib/helpers";
 import type { Manga, SearchResult } from "@/lib/types";
+import MangaCard from "@/components/manga/MangaCard";
 
 export default function MangaListPage() {
   const [manga, setManga] = useState<Manga[]>([]);
@@ -170,32 +171,17 @@ export default function MangaListPage() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6 w-full max-w-5xl">
             {manga.map(m => {
-              const imgSrc = buildS3ImageUrl(m.cover_image_s3_key);
               const title = unwrapString(m.title_english);
 
               return (
-
-                <div key={m.id} className="bg-[#222] rounded-xl p-4 flex flex-col items-center cursor-pointer border border-white hover:shadow-lg">
-                  <div
-                    onClick={() => router.push(`/manga/${m.id}`)}
-                  >
-                    {imgSrc && (
-                      <img
-                        src={imgSrc}
-                        alt={title}
-                        className="w-32 h-48 object-cover mb-2 rounded"
-                      />
-                    )}
-                    <span className="font-bold text-lg">
-                      {title || "Untitled"}
-                    </span>
-                  </div>
-                  <button onClick={() => handleTicket(m.id)}>
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="size-6">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 6v.75m0 3v.75m0 3v.75m0 3V18m-9-5.25h5.25M7.5 15h3M3.375 5.25c-.621 0-1.125.504-1.125 1.125v3.026a2.999 2.999 0 0 1 0 5.198v3.026c0 .621.504 1.125 1.125 1.125h17.25c.621 0 1.125-.504 1.125-1.125v-3.026a2.999 2.999 0 0 1 0-5.198V6.375c0-.621-.504-1.125-1.125-1.125H3.375Z" />
-                    </svg>
-                  </button>
-                </div>
+                <MangaCard
+                  key={m.id}
+                  id={m.id}
+                  title={title || "Untitled"}
+                  coverImageKey={unwrapString(m.cover_image_s3_key)}
+                  onOpen={mangaId => router.push(`/manga/${mangaId}`)}
+                  onTicket={handleTicket}
+                />
               );
             })}
           </div>
