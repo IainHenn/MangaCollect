@@ -1,6 +1,7 @@
-import type { CollectionMangaEntry, WrappedNumber, WrappedString, WrappedTime } from "@/lib/types";
+import type { CollectionMangaEntry, SubmissionRequestType, WrappedNumber, WrappedString, WrappedTime } from "@/lib/types";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
+const USER_TYPE_STORAGE_KEY = "mangacollect_user_type";
 
 export function unwrapString(value: WrappedString): string {
   if (typeof value === "string") return value;
@@ -40,4 +41,64 @@ export function mapCollectionManga(response: Record<string, number> | undefined)
     id,
     title_english: title,
   }));
+}
+
+export function normalizeSubmissionType(typeValue: string | undefined): SubmissionRequestType {
+  const normalized = (typeValue ?? "").toUpperCase();
+
+  if (normalized === "CREATE" || normalized === "EDIT" || normalized === "DELETE") {
+    return normalized;
+  }
+
+  return "UNKNOWN";
+}
+
+export function getSubmissionTypeMeta(typeValue: string | undefined): { label: string; icon: string; badgeClass: string } {
+  const type = normalizeSubmissionType(typeValue);
+
+  switch (type) {
+    case "CREATE":
+      return {
+        label: "Create",
+        icon: "+",
+        badgeClass: "bg-green-700 text-white",
+      };
+    case "EDIT":
+      return {
+        label: "Edit",
+        icon: "~",
+        badgeClass: "bg-yellow-700 text-white",
+      };
+    case "DELETE":
+      return {
+        label: "Delete",
+        icon: "-",
+        badgeClass: "bg-red-700 text-white",
+      };
+    default:
+      return {
+        label: "Unknown",
+        icon: "?",
+        badgeClass: "bg-gray-700 text-white",
+      };
+  }
+}
+
+export function setStoredUserType(userType: string): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(USER_TYPE_STORAGE_KEY, userType);
+}
+
+export function getStoredUserType(): string {
+  if (typeof window === "undefined") return "";
+  return window.localStorage.getItem(USER_TYPE_STORAGE_KEY) ?? "";
+}
+
+export function clearStoredUserType(): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(USER_TYPE_STORAGE_KEY);
+}
+
+export function isStoredAdminUser(): boolean {
+  return getStoredUserType() === "admin";
 }

@@ -43,6 +43,8 @@ type UserSubmissionFetch struct {
 	SubmissionNotes string `json:"submission_notes"`
 	CoverImageURL   string `json:"cover_image_url"`
 	ApprovalStatus  string `json:"approval_status"`
+	SubmissionId    int    `json:"submission_id"`
+	TicketType      string `json:"ticket_type"`
 }
 
 // verifyImage scans a multipart image for viruses using ClamAV.
@@ -359,7 +361,15 @@ func getSubmissionsFromUser(c *gin.Context) {
 
 	//(user_id, manga_id, volume_title, volume_number, submission_notes)
 	rows, err := conn.Query(`
-		SELECT m.title_english, us.manga_id, us.volume_title, us.volume_number, us.submission_notes, us.cover_image_url, us.status
+		SELECT m.title_english, 
+			us.manga_id, 
+			us.volume_title, 
+			us.volume_number, 
+			us.submission_notes, 
+			us.cover_image_url, 
+			us.status, 
+			us.id AS submission_id, 
+			us.type as ticket_type
 		FROM manga_volume_submissions us
 		JOIN manga m ON us.manga_id = m.id
 		WHERE us.submitter_user_id = $1
@@ -374,7 +384,14 @@ func getSubmissionsFromUser(c *gin.Context) {
 	var submissions []UserSubmissionFetch
 	for rows.Next() {
 		var s UserSubmissionFetch
-		err := rows.Scan(&s.TitleEnglish, &s.MangaID, &s.VolumeTitle, &s.VolumeNumber, &s.SubmissionNotes, &s.CoverImageURL, &s.ApprovalStatus)
+		err := rows.Scan(&s.TitleEnglish, &s.MangaID, &s.VolumeTitle,
+			&s.VolumeNumber,
+			&s.SubmissionNotes,
+			&s.CoverImageURL,
+			&s.ApprovalStatus,
+			&s.SubmissionId,
+			&s.TicketType,
+		)
 		if err != nil {
 			fmt.Println(err)
 			c.JSON(500, gin.H{"error": "Error scanning submission"})
@@ -385,10 +402,6 @@ func getSubmissionsFromUser(c *gin.Context) {
 
 	c.JSON(200, gin.H{"submissions": submissions})
 
-}
-
-type SubmissionFilters struct {
-	Status string `json:"status"`
 }
 
 func getSubmission(c *gin.Context) {
@@ -429,14 +442,6 @@ func getSubmissions(c *gin.Context) {
 		return
 	}
 
-	var submissionFilters SubmissionFilters
-
-	err := c.BindJSON(&submissionFilters)
-	if err != nil {
-		c.JSON(404, gin.H{"error": "Invalid filters"})
-		return
-	}
-
 	conn, err := get_db_conn()
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Database connection error"})
@@ -451,13 +456,32 @@ func getSubmissions(c *gin.Context) {
 		return
 	}
 
-	//(user_id, manga_id, volume_title, volume_number, submission_notes)
-	rows, err := conn.Query(`
-		SELECT m.title_english, us.manga_id, us.volume_title, us.volume_number, us.submission_notes, us.cover_image_url, us.status
+	var conditions []string
+	var args []interface{}
+	argIndex := 1
+
+	status, found := c.GetQuery("status")
+	if found {
+		conditions = append(conditions, fmt.Sprintf("us.status = $%d", argIndex))
+		args = append(args, status)
+		argIndex++
+	}
+
+	query := `SELECT m.title_english, 
+			us.manga_id, us.volume_title, 
+			us.volume_number, us.submission_notes,
+			us.cover_image_url, 
+			us.status, 
+			us.id AS submission_id,
+			us.type AS ticket_type
 		FROM manga_volume_submissions us
-		JOIN manga m ON us.manga_id = m.id
-		WHERE us.status = $1
-	`, submissionFilters.Status)
+		JOIN manga m ON us.manga_id = m.id`
+
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	rows, err := conn.Query(query, args...)
 	if err != nil {
 		fmt.Println(err)
 		c.JSON(500, gin.H{"error": "Failed to fetch submissions"})
@@ -468,7 +492,16 @@ func getSubmissions(c *gin.Context) {
 	var submissions []UserSubmissionFetch
 	for rows.Next() {
 		var s UserSubmissionFetch
-		err := rows.Scan(&s.TitleEnglish, &s.MangaID, &s.VolumeTitle, &s.VolumeNumber, &s.SubmissionNotes, &s.CoverImageURL, &s.ApprovalStatus)
+		err := rows.Scan(&s.TitleEnglish,
+			&s.MangaID,
+			&s.VolumeTitle,
+			&s.VolumeNumber,
+			&s.SubmissionNotes,
+			&s.CoverImageURL,
+			&s.ApprovalStatus,
+			&s.SubmissionId,
+			&s.TicketType,
+		)
 		if err != nil {
 			fmt.Println(err)
 			c.JSON(500, gin.H{"error": "Error scanning submission"})
@@ -548,7 +581,7 @@ func acceptSubmission(c *gin.Context) {
 	if strings.TrimSpace(submissionBody.SubmissionNotes) != "" {
 		updateQuery = `
 			UPDATE manga_volume_submissions
-			SET status = 'accepted',
+			SET status = 'approved',
 				reviewed_at = NOW(),
 				reviewed_by = $2,
 				updated_at = NOW(),
@@ -558,7 +591,7 @@ func acceptSubmission(c *gin.Context) {
 	} else {
 		updateQuery = `
 			UPDATE manga_volume_submissions
-			SET status = 'accepted',
+			SET status = 'approved',
 				reviewed_at = NOW(),
 				reviewed_by = $2,
 				updated_at = NOW(),
@@ -569,6 +602,7 @@ func acceptSubmission(c *gin.Context) {
 
 	_, err = tx.Exec(updateQuery, args...)
 	if err != nil {
+		fmt.Println(err)
 		c.JSON(500, gin.H{"error": "Failed to update submission status"})
 		return
 	}

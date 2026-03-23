@@ -16,6 +16,11 @@ export interface AuthPayloads {
   password: string;
 }
 
+export interface AuthTokenResponse {
+  user_type?: string;
+  error?: string;
+}
+
 export interface SignUpPayload {
   username: string;
   email: string;
@@ -94,4 +99,49 @@ export interface CollectionVolumeEntry {
   volume_id: number;
   volume_title: string;
   thumbnail_s3_key?: WrappedString;
+}
+
+export type SubmissionStatus = "pending" | "approved" | "rejected";
+export type SubmissionRequestType = "CREATE" | "EDIT" | "DELETE" | "UNKNOWN";
+
+export interface AdminSubmissionSummary {
+  id?: number;
+  title_english: WrappedString;
+  manga_id: number;
+  volume_title: WrappedString;
+  volume_number: number;
+  submission_notes: string;
+  cover_image_url: WrappedString;
+  approval_status: SubmissionStatus | string;
+  type?: SubmissionRequestType | string;
+}
+
+export interface AdminSubmissionSummaryResponse {
+  submissions: AdminSubmissionSummary[];
+}
+
+export interface AdminSubmissionDetail {
+  title_english: WrappedString;
+  manga_id: number;
+  volume_title: WrappedString;
+  volume_number: number;
+  submission_notes: string;
+  cover_image_url: WrappedString;
+  approval_status: SubmissionStatus | string;
+  type?: SubmissionRequestType | string;
+}
+
+export interface AdminSubmissionFilters {
+  status: SubmissionStatus | string;
+}
+
+export interface AdminSubmissionEditPayload {
+  manga_id?: number;
+  volume_title?: string;
+  volume_number?: number;
+  status?: SubmissionStatus | string;
+}
+
+export interface AdminActionPayload {
+  submission_notes?: string;
 }

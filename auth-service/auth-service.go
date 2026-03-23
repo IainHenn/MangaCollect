@@ -525,8 +525,8 @@ func authToken(c *gin.Context) {
 	defer conn.Close()
 
 	var user_id int32
-	var username, email, password_hash string
-	err = conn.QueryRow(`SELECT id, username, email, password_hash FROM users WHERE email = $1`, req.Email).Scan(&user_id, &username, &email, &password_hash)
+	var username, email, password_hash, user_type string
+	err = conn.QueryRow(`SELECT id, username, email, password_hash, user_type FROM users WHERE email = $1`, req.Email).Scan(&user_id, &username, &email, &password_hash, &user_type)
 	if err != nil {
 		c.JSON(401, gin.H{"error": "Invalid credentials"})
 		return
@@ -581,10 +581,11 @@ func authToken(c *gin.Context) {
 	})
 
 	c.JSON(200, gin.H{
-		"user_id":  user_id,
-		"username": username,
-		"email":    email,
-		"token":    tokenString,
+		"user_id":   user_id,
+		"username":  username,
+		"email":     email,
+		"token":     tokenString,
+		"user_type": user_type,
 	})
 }
 

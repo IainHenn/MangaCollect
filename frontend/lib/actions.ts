@@ -1,6 +1,11 @@
 import { API_BASE_URL } from "@/lib/helpers";
 import type {
+  AuthTokenResponse,
   ApiStatusResponse,
+  AdminActionPayload,
+  AdminSubmissionDetail,
+  AdminSubmissionEditPayload,
+  AdminSubmissionSummary,
   CollectionType,
   CollectionTypeResponse,
   Manga,
@@ -14,6 +19,11 @@ import type {
   VerifyEmailPayload,
   Volume,
 } from "@/lib/types";
+
+type AdminSubmissionWire = AdminSubmissionSummary & {
+  submission_id?: number;
+  ticket_type?: string;
+};
 
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   return fetch(`${API_BASE_URL}${path}`, init);
@@ -34,6 +44,27 @@ export async function signIn(email: string, password: string): Promise<Response>
     credentials: "include",
     body: JSON.stringify({ email, password }),
   });
+}
+
+export async function signInWithUserType(
+  email: string,
+  password: string,
+): Promise<{ ok: boolean; userType: string; error?: string }> {
+  const response = await signIn(email, password);
+  const data = await parseJsonSafe<AuthTokenResponse>(response);
+
+  if (!response.ok) {
+    return {
+      ok: false,
+      userType: "",
+      error: data?.error ?? "Invalid credentials",
+    };
+  }
+
+  return {
+    ok: true,
+    userType: data?.user_type ?? "",
+  };
 }
 
 export async function signUp(payload: SignUpPayload): Promise<Response> {
@@ -231,4 +262,125 @@ export async function submitTicket(formData: FormData): Promise<Response> {
     body: formData,
     credentials: "include",
   });
+}
+
+export async function fetchAdminSubmissions(status = "pending"): Promise<{
+  submissions: AdminSubmissionSummary[];
+  unauthorized: boolean;
+  backendIssue?: string;
+  error?: string;
+}> {
+  // NOTE: Current backend expects JSON body on GET /admin/submissions.
+  // Browsers do not reliably support GET request bodies.
+  const response = await apiFetch(`/admin/submissions?status=${encodeURIComponent(status)}`, {
+    method: "GET",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+  });
+
+  if (response.status === 401 || response.status === 403) {
+    return { submissions: [], unauthorized: true };
+  }
+
+  if (response.status === 404) {
+    const data = await parseJsonSafe<ApiStatusResponse>(response);
+    const backendIssue = data?.error || "Invalid filters";
+    return {
+      submissions: [],
+      unauthorized: false,
+      backendIssue:
+        backendIssue === "Invalid filters"
+          ? "GET /admin/submissions currently expects a JSON body via BindJSON in the backend, which browsers cannot send reliably for GET requests."
+          : backendIssue,
+    };
+  }
+
+  if (!response.ok) {
+    const data = await parseJsonSafe<ApiStatusResponse>(response);
+    return { submissions: [], unauthorized: false, error: data?.error ?? "Failed to fetch admin requests" };
+  }
+
+  const data = await parseJsonSafe<{ submissions?: AdminSubmissionWire[] }>(response);
+  const normalized = Array.isArray(data?.submissions)
+    ? data.submissions.map(submission => ({
+        ...submission,
+        id: submission.id ?? submission.submission_id,
+        type: submission.type ?? submission.ticket_type,
+      }))
+    : [];
+
+  return {
+    submissions: normalized,
+    unauthorized: false,
+  };
+}
+
+export async function fetchAdminSubmission(submissionId: string): Promise<{ submission: AdminSubmissionDetail | null; error?: string }> {
+  const response = await apiFetch(`/submissions/${submissionId}`, {
+    method: "GET",
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    const data = await parseJsonSafe<ApiStatusResponse>(response);
+    return { submission: null, error: data?.error ?? "Failed to fetch request details" };
+  }
+
+  const data = await parseJsonSafe<(AdminSubmissionDetail & { ticket_type?: string; type?: string })>(response);
+  if (!data) return { submission: null, error: "Failed to parse request details" };
+
+  return {
+    submission: {
+      ...data,
+      type: data.type ?? data.ticket_type,
+    },
+  };
+}
+
+export async function acceptAdminSubmission(submissionId: string, payload?: AdminActionPayload): Promise<{ ok: boolean; error?: string }> {
+  const response = await apiFetch(`/admin/submissions/${submissionId}/accept`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload ?? {}),
+  });
+
+  if (!response.ok) {
+    const data = await parseJsonSafe<ApiStatusResponse>(response);
+    return { ok: false, error: data?.error ?? "Failed to accept request" };
+  }
+
+  return { ok: true };
+}
+
+export async function rejectAdminSubmission(submissionId: string, payload?: AdminActionPayload): Promise<{ ok: boolean; error?: string }> {
+  const response = await apiFetch(`/admin/submissions/${submissionId}/reject`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload ?? {}),
+  });
+
+  if (!response.ok) {
+    const data = await parseJsonSafe<ApiStatusResponse>(response);
+    return { ok: false, error: data?.error ?? "Failed to reject request" };
+  }
+
+  return { ok: true };
+}
+
+export async function editAdminSubmission(submissionId: string, payload: AdminSubmissionEditPayload): Promise<{ ok: boolean; error?: string }> {
+  const response = await apiFetch(`/admin/submissions/${submissionId}`, {
+    method: "PATCH",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const data = await parseJsonSafe<ApiStatusResponse>(response);
+    return { ok: false, error: data?.error ?? "Failed to edit request" };
+  }
+
+  return { ok: true };
 }
