@@ -69,6 +69,32 @@ export async function signInWithUserType(
   };
 }
 
+export async function signOut(): Promise<{ ok: boolean; missingRoute?: boolean; error?: string }> {
+  const response = await apiFetch("/auth/logout", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+  });
+
+  if (response.ok) {
+    return { ok: true };
+  }
+
+  if (response.status === 404) {
+    return {
+      ok: false,
+      missingRoute: true,
+      error: "Logout endpoint is not available yet",
+    };
+  }
+
+  const data = await parseJsonSafe<ApiStatusResponse>(response);
+  return {
+    ok: false,
+    error: data?.error ?? "Logout failed",
+  };
+}
+
 export async function signUp(payload: SignUpPayload): Promise<Response> {
   return apiFetch("/register", {
     method: "POST",
@@ -304,15 +330,23 @@ export async function fetchUserSubmissions(userId: number): Promise<{
   };
 }
 
-export async function fetchAdminSubmissions(status = "pending"): Promise<{
+export async function fetchAdminSubmissions(status?: string): Promise<{
   submissions: AdminSubmissionSummary[];
   unauthorized: boolean;
   backendIssue?: string;
   error?: string;
 }> {
+  const queryParams = new URLSearchParams();
+  if (status && status !== "all") {
+    queryParams.set("status", status);
+  }
+
+  const queryString = queryParams.toString();
+  const path = queryString ? `/admin/submissions?${queryString}` : "/admin/submissions";
+
   // NOTE: Current backend expects JSON body on GET /admin/submissions.
   // Browsers do not reliably support GET request bodies.
-  const response = await apiFetch(`/admin/submissions?status=${encodeURIComponent(status)}`, {
+  const response = await apiFetch(path, {
     method: "GET",
     credentials: "include",
     headers: { "Content-Type": "application/json" },

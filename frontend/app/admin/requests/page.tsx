@@ -8,11 +8,29 @@ import { fetchAdminSubmissions } from "@/lib/actions";
 import { clearStoredUserType } from "@/lib/helpers";
 import type { AdminSubmissionSummary, SubmissionStatus } from "@/lib/types";
 
+type SubmissionStatusFilter = "all" | SubmissionStatus;
+type SubmissionTypeFilter = "all" | "CREATE" | "UPDATE" | "DELETE";
+
+function normalizeRequestType(typeValue: string | undefined): SubmissionTypeFilter | "UNKNOWN" {
+  const normalized = String(typeValue ?? "").toUpperCase();
+
+  if (normalized === "EDIT" || normalized === "UPDATE") {
+    return "UPDATE";
+  }
+
+  if (normalized === "CREATE" || normalized === "DELETE") {
+    return normalized;
+  }
+
+  return "UNKNOWN";
+}
+
 export default function AdminRequestsPage() {
   const router = useRouter();
   const [requests, setRequests] = useState<AdminSubmissionSummary[]>([]);
   const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState<SubmissionStatus>("pending");
+  const [statusFilter, setStatusFilter] = useState<SubmissionStatusFilter>("all");
+  const [typeFilter, setTypeFilter] = useState<SubmissionTypeFilter>("all");
   const [error, setError] = useState("");
   const [backendIssue, setBackendIssue] = useState("");
 
@@ -40,7 +58,15 @@ export default function AdminRequestsPage() {
       .finally(() => setLoading(false));
   }, [router, statusFilter]);
 
-  const validRequests = useMemo(() => requests.filter(request => typeof request.id === "number"), [requests]);
+  const validRequests = useMemo(() => {
+    const withValidId = requests.filter(request => typeof request.id === "number");
+
+    if (typeFilter === "all") {
+      return withValidId;
+    }
+
+    return withValidId.filter(request => normalizeRequestType(request.type) === typeFilter);
+  }, [requests, typeFilter]);
 
   return (
     <AdminRouteGuard>
@@ -54,13 +80,24 @@ export default function AdminRequestsPage() {
               setLoading(true);
               setError("");
               setBackendIssue("");
-              setStatusFilter(e.target.value as SubmissionStatus);
+              setStatusFilter(e.target.value as SubmissionStatusFilter);
             }}
             className="px-3 py-2 rounded bg-gray-800 text-white border border-gray-600"
           >
+            <option value="all">All Statuses</option>
             <option value="pending">Pending</option>
             <option value="approved">Approved</option>
             <option value="rejected">Rejected</option>
+          </select>
+          <select
+            value={typeFilter}
+            onChange={e => setTypeFilter(e.target.value as SubmissionTypeFilter)}
+            className="px-3 py-2 rounded bg-gray-800 text-white border border-gray-600"
+          >
+            <option value="all">All Types</option>
+            <option value="CREATE">Create</option>
+            <option value="UPDATE">Update</option>
+            <option value="DELETE">Delete</option>
           </select>
           <button
             className="px-4 py-2 rounded bg-blue-700 text-white font-semibold hover:bg-blue-800 transition"

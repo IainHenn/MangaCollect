@@ -1,8 +1,8 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { fetchMangas as fetchMangaPage, searchManga } from "@/lib/actions";
-import { unwrapString } from "@/lib/helpers";
+import { fetchMangas as fetchMangaPage, searchManga, signOut } from "@/lib/actions";
+import { clearStoredUserId, clearStoredUserType, unwrapString } from "@/lib/helpers";
 import type { Manga, SearchResult } from "@/lib/types";
 import MangaCard from "@/components/manga/MangaCard";
 
@@ -18,6 +18,7 @@ export default function MangaListPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchType, setSearchType] = useState("manga");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [loggingOut, setLoggingOut] = useState(false);
 
   const [debouncedQuery, setDebouncedQuery] = useState(searchQuery);
 
@@ -86,6 +87,20 @@ export default function MangaListPage() {
     router.push(`/manga/ticket-request/${manga_id}`);
   }
 
+  async function handleLogout() {
+    setLoggingOut(true);
+
+    try {
+      await signOut();
+    } catch {
+      // Local logout fallback still runs if endpoint is unavailable.
+    } finally {
+      clearStoredUserType();
+      clearStoredUserId();
+      router.push("/auth/signin");
+    }
+  }
+
   return (
     <>
       <div className="min-h-screen bg-black text-white flex flex-col items-center py-8 relative">
@@ -152,6 +167,13 @@ export default function MangaListPage() {
             onClick={() => router.push("/manga/your-submissions")}
           >
             Your Submissions
+          </button>
+          <button
+            className="px-6 py-3 rounded bg-red-700 text-white font-semibold shadow hover:bg-red-800 transition disabled:opacity-60"
+            onClick={handleLogout}
+            disabled={loggingOut}
+          >
+            {loggingOut ? "Logging out..." : "Logout"}
           </button>
         </div>
         <h2 className="text-3xl font-bold mb-6">MangaCollect</h2>
