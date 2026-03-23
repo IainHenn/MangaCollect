@@ -1,6 +1,8 @@
 "use client";
+
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { requestPasswordReset } from "@/lib/actions";
 
 export default function RequestPasswordResetForm() {
   const [email, setEmail] = useState("");
@@ -12,15 +14,13 @@ export default function RequestPasswordResetForm() {
     e.preventDefault();
     setMessage("");
     setError("");
-    const res = await fetch("http://localhost:8080/request-password-reset", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email }),
-    });
-    if (!res.ok) {
+
+    const response = await requestPasswordReset(email);
+    if (!response.ok) {
       setError("Failed to request password reset");
       return;
     }
+
     setMessage("Password reset email sent! Check your inbox.");
   }
 
@@ -37,22 +37,11 @@ export default function RequestPasswordResetForm() {
             required
             className="p-3 rounded border border-gray-300 outline-none"
           />
-          <button
-            type="submit"
-            className="bg-white text-[#222] font-bold rounded py-3 w-full"
-          >
+          <button type="submit" className="bg-white text-[#222] font-bold rounded py-3 w-full">
             Send Reset Email
           </button>
-          {error && (
-            <div className="w-full py-2 rounded text-center font-bold bg-red-600 text-white">
-              {error}
-            </div>
-          )}
-          {message && (
-            <div className="w-full py-2 rounded text-center font-bold bg-green-600 text-white">
-              {message}
-            </div>
-          )}
+          {error && <div className="w-full py-2 rounded text-center font-bold bg-red-600 text-white">{error}</div>}
+          {message && <div className="w-full py-2 rounded text-center font-bold bg-green-600 text-white">{message}</div>}
         </form>
         <button
           type="button"

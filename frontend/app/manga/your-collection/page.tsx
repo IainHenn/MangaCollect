@@ -1,286 +1,189 @@
 "use client";
-import { useEffect, useState, useRef } from "react";
+
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  addVolumeToCollection,
+  addVolumeToWishlist,
+  fetchCollectionManga,
+  fetchCollectionVolumes,
+  removeVolumeFromCollection,
+  removeVolumeFromWishlist,
+  searchManga,
+} from "@/lib/actions";
+import { buildS3ImageUrl, mapCollectionManga, unwrapString } from "@/lib/helpers";
+import type { CollectionMangaEntry, CollectionType, SearchResult, Volume } from "@/lib/types";
 
-type MangaEntry = { id: number; title_english: string };
-type VolumeEntry = { volume_id: number; volume_title: string; thumbnail_s3_key?: string | { String: string } };
+interface CollectionVolumeEntry {
+  volume_id: number;
+  volume_title: string;
+  thumbnail_s3_key?: string;
+}
 
-function unwrap(val: any) {
-  if (val && typeof val === "object" && "String" in val) return val.String;
-  return typeof val === "string" ? val : "";
+function mapVolumeEntries(volumes: Volume[]): CollectionVolumeEntry[] {
+  return volumes.map(volume => ({
+    volume_id: volume.volume_id,
+    volume_title: unwrapString(volume.volume_title),
+    thumbnail_s3_key: unwrapString(volume.thumbnail_s3_key),
+  }));
 }
 
 export default function UserCollectionPage() {
-  const [collectionType, setCollectionType] = useState<"collected" | "wishlisted">("collected");
-  const [mangaList, setMangaList] = useState<MangaEntry[]>([]);
-  const [selectedManga, setSelectedManga] = useState<MangaEntry | null>(null);
-  const [volumes, setVolumes] = useState<VolumeEntry[]>([]);
+  const [collectionType, setCollectionType] = useState<CollectionType>("collected");
+  const [mangaList, setMangaList] = useState<CollectionMangaEntry[]>([]);
+  const [selectedManga, setSelectedManga] = useState<CollectionMangaEntry | null>(null);
+  const [volumes, setVolumes] = useState<CollectionVolumeEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
-  
-  // For searching
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchType, setSearchType] = useState("manga");
-  const [searchResults, setSearchResults] = useState([]);
-
-  const [debouncedQuery, setDebouncedQuery] = useState(searchQuery);
+  const [searchType, setSearchType] = useState<"manga" | "volume">("manga");
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
 
   const [unauthorized, setUnauthorized] = useState(false);
 
-  // For highlighting searched volume
   const [highlightedVolumeId, setHighlightedVolumeId] = useState<number | null>(null);
-  const volumeRefs = useRef<{ [key: number]: HTMLDivElement | null }>({});
+  const volumeRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
   const router = useRouter();
 
-  // Debouncing search
   useEffect(() => {
-    const timer = setTimeout(() => setDebouncedQuery(searchQuery), 300);
+    const timer = setTimeout(() => {
+      if (!searchQuery) {
+        setSearchResults([]);
+        return;
+      }
+
+      searchManga(searchQuery, collectionType, searchType, true)
+        .then(data => setSearchResults(data.results ?? []))
+        .catch(() => setSearchResults([]));
+    }, 300);
+
     return () => clearTimeout(timer);
-  }, [searchQuery]);
+  }, [searchQuery, searchType, collectionType]);
 
-  // For search
   useEffect(() => {
-    if (!searchQuery) {
-      setSearchResults([]);
-      return;
-    }
-
-    const controller = new AbortController(); // cancel previous requests
-    const signal = controller.signal;
-
-    fetch(`http://localhost:8080/mangas/search?query=${searchQuery}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      credentials: 'include',
-      body: JSON.stringify({
-        searchFrom: collectionType,
-        by: searchType,
-      }),
-      signal,
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.results) setSearchResults(data.results);
-        else setSearchResults([]);
-      })
-      .catch((err) => {
-        if (err.name !== "AbortError") console.error(err);
-      });
-
-    return () => controller.abort(); // cleanup previous fetch
-  }, [searchQuery, searchType]);
-
-
-  // Fetch unique manga for the selected collection type
-  useEffect(() => {
-    setLoading(true);
-    fetch(`http://localhost:8080/collection_type/${collectionType}`, { credentials: "include" })
-      .then(res => {
-        if(res.status == 401) {
-          setUnauthorized(true);
-          return null
-        }
-        return res.json()
-      })
+    fetchCollectionManga(collectionType)
       .then(data => {
-        if(!data){
-          return;
-        }
-        if (data.manga && typeof data.manga === "object") {
-          const mangaArray = Object.entries(data.manga).map(([title, id]) => ({
-            id: id as number,
-            title_english: title,
-          }));
-          setMangaList(mangaArray);
-        } else {
-          setMangaList([]);
-        }
+        setUnauthorized(data.unauthorized);
+        setMangaList(mapCollectionManga(data.manga));
         setSelectedManga(null);
         setVolumes([]);
       })
-      .catch(err => {
-        console.error("Failed to fetch manga", err);
+      .catch(() => {
         setMangaList([]);
       })
-      .finally(() => {if (!unauthorized) setLoading(false); });
+      .finally(() => setLoading(false));
   }, [collectionType]);
 
   useEffect(() => {
-  if (unauthorized) {
-    const timer = setTimeout(() => {
-      router.push("/auth/signup");
-    }, 800); // short delay so spinner is visible
-
-    return () => clearTimeout(timer);
-  }
-}, [unauthorized, router]);
-
-  // Fetch volumes for selected manga
-  useEffect(() => {
     if (!selectedManga) {
-      setVolumes([]);
       return;
     }
-    setLoading(true);
-    fetch(`http://localhost:8080/collection_type/${collectionType}/${selectedManga.id}`, { credentials: "include" })
-      .then(res => res.json())
-      .then(data => {
-        if (Array.isArray(data)) {
-          const volumes = data.map((v: any) => ({
-            volume_id: v.volume_id,
-            volume_title: v.volume_title,
-            thumbnail_s3_key: v.thumbnail_s3_key,
-          }));
-          setVolumes(volumes);
-        } else {
-          setVolumes([]);
-        }
-      })
-      .catch(err => {
-        console.error("Failed to fetch volumes", err);
-        setVolumes([]);
-      })
+
+    fetchCollectionVolumes(collectionType, selectedManga.id)
+      .then(data => setVolumes(mapVolumeEntries(data)))
+      .catch(() => setVolumes([]))
       .finally(() => setLoading(false));
   }, [selectedManga, collectionType]);
 
-  // Scroll to highlighted volume when volumes are loaded
+  useEffect(() => {
+    if (unauthorized) {
+      const timer = setTimeout(() => {
+        router.push("/auth/signup");
+      }, 800);
+
+      return () => clearTimeout(timer);
+    }
+  }, [unauthorized, router]);
+
   useEffect(() => {
     if (highlightedVolumeId && volumeRefs.current[highlightedVolumeId]) {
       const timer = setTimeout(() => {
-        volumeRefs.current[highlightedVolumeId]?.scrollIntoView({
-          behavior: 'smooth',
-          block: 'center'
-        });
-      }, 100); // Small delay to ensure DOM is ready
-      
+        volumeRefs.current[highlightedVolumeId]?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 100);
+
       return () => clearTimeout(timer);
     }
   }, [highlightedVolumeId, volumes]);
 
-  // Clear highlight after 3 seconds
   useEffect(() => {
     if (highlightedVolumeId) {
       const timer = setTimeout(() => {
         setHighlightedVolumeId(null);
       }, 3000);
-      
+
       return () => clearTimeout(timer);
     }
   }, [highlightedVolumeId]);
 
-  // Remove volume from collection
-  async function removeVolume(volumeID: number) {
-    const endpoint = collectionType === "collected" 
-      ? `http://localhost:8080/collection/${volumeID}`
-      : `http://localhost:8080/wishlist/${volumeID}`;
-    await fetch(endpoint, {
-      method: "DELETE",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-    });
-    // Refresh volumes
-    if (selectedManga) {
-      fetch(`http://localhost:8080/collection_type/${collectionType}/${selectedManga.id}`, { credentials: "include" })
-        .then(res => res.json())
-        .then(data => {
-          if (Array.isArray(data)) {
-            const volumes = data.map((v: any) => ({
-              volume_id: v.volume_id,
-              volume_title: v.volume_title,
-              thumbnail_s3_key: v.thumbnail_s3_key,
-            }));
-            setVolumes(volumes);
-          }
-        });
-    }
+  async function refreshVolumesForSelectedManga() {
+    if (!selectedManga) return;
+    const data = await fetchCollectionVolumes(collectionType, selectedManga.id);
+    setVolumes(mapVolumeEntries(data));
   }
 
-  // Move single volume to collection
-  async function moveToCollection(volumeID: number) {
-    await fetch(`http://localhost:8080/collection/${volumeID}`, {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-    });
-    // Refresh volumes
-    if (selectedManga) {
-      fetch(`http://localhost:8080/collection_type/${collectionType}/${selectedManga.id}`, { credentials: "include" })
-        .then(res => res.json())
-        .then(data => {
-          if (Array.isArray(data)) {
-            const volumes = data.map((v: any) => ({
-              volume_id: v.volume_id,
-              volume_title: v.volume_title,
-              thumbnail_s3_key: v.thumbnail_s3_key,
-            }));
-            setVolumes(volumes);
-          }
-        });
+  async function removeVolume(volumeId: number) {
+    if (collectionType === "collected") {
+      await removeVolumeFromCollection(volumeId);
+    } else {
+      await removeVolumeFromWishlist(volumeId);
     }
+
+    await refreshVolumesForSelectedManga();
   }
 
-  // Move single volume to wishlist
-  async function moveToWishlist(volumeID: number) {
-    await fetch(`http://localhost:8080/wishlist/${volumeID}`, {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-    });
-    // Refresh volumes
-    if (selectedManga) {
-      fetch(`http://localhost:8080/collection_type/${collectionType}/${selectedManga.id}`, { credentials: "include" })
-        .then(res => res.json())
-        .then(data => {
-          if (Array.isArray(data)) {
-            const volumes = data.map((v: any) => ({
-              volume_id: v.volume_id,
-              volume_title: v.volume_title,
-              thumbnail_s3_key: v.thumbnail_s3_key,
-            }));
-            setVolumes(volumes);
-          }
-        });
+  async function moveToCollection(volumeId: number) {
+    await addVolumeToCollection(volumeId);
+    await refreshVolumesForSelectedManga();
+  }
+
+  async function moveToWishlist(volumeId: number) {
+    await addVolumeToWishlist(volumeId);
+    await refreshVolumesForSelectedManga();
+  }
+
+  async function moveAll(mangaId: number, targetType: CollectionType) {
+    const currentVolumes = await fetchCollectionVolumes(collectionType, mangaId);
+
+    for (const volume of currentVolumes) {
+      if (targetType === "collected") {
+        await addVolumeToCollection(volume.volume_id);
+        await removeVolumeFromWishlist(volume.volume_id);
+      } else {
+        await addVolumeToWishlist(volume.volume_id);
+        await removeVolumeFromCollection(volume.volume_id);
+      }
     }
+
+    await refreshVolumesForSelectedManga();
   }
 
   return (
     <div className="min-h-screen bg-black text-white flex flex-col items-center py-8">
       <h2 className="text-3xl font-bold mb-6">Your Collection</h2>
 
-
       <div className="border border-white rounded-lg p-6 relative w-full max-w-md mb-4">
         <select
           value={searchType}
-          onChange={(e) => setSearchType(e.target.value)}
-          className="
-            mb-2 w-full p-2 rounded-lg
-            bg-black text-white
-            border border-white
-            focus:outline-none focus:ring-2 focus:ring-white
-            appearance-none
-            cursor-pointer
-          "
+          onChange={e => setSearchType(e.target.value as "manga" | "volume")}
+          className="mb-2 w-full p-2 rounded-lg bg-black text-white border border-white focus:outline-none focus:ring-2 focus:ring-white appearance-none cursor-pointer"
         >
           <option value="manga">Manga</option>
           <option value="volume">Volume</option>
         </select>
-        
+
         <input
           id="search"
           type="text"
           placeholder="Search..."
           value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
+          onChange={e => setSearchQuery(e.target.value)}
           className="w-full p-2 rounded text-white"
         />
 
-        {/* Results dropdown */}
         {searchResults.length > 0 && searchQuery.length > 0 && (
           <div className="absolute top-full left-0 mt-1 w-full bg-black border border-white rounded-lg max-h-60 overflow-y-auto z-10">
-            {searchResults.map((result: any) => (
+            {searchResults.map(result => (
               <div
                 key={result.id}
                 className="p-2 hover:bg-gray-700 cursor-pointer"
@@ -288,25 +191,16 @@ export default function UserCollectionPage() {
                   setSearchQuery("");
                   setSearchResults([]);
 
-                  if(searchType == "manga"){
-                    // Find the manga in the current mangaList
-                    const manga = mangaList.find(m => m.id === result.id);
-                    if (manga) {
-                      setSelectedManga(manga);
-                    } else {
-                      setSelectedManga({"id": result.id, "title_english": result.text});
-                    }
+                  if (searchType === "manga") {
+                    const foundManga = mangaList.find(m => m.id === result.id);
+                    setSelectedManga(foundManga ?? { id: result.id, title_english: result.text });
                     setHighlightedVolumeId(null);
-                  } else if (searchType == "volume") {
-                    // Find the manga in the current mangaList
-                    const manga = mangaList.find(m => m.id === result.manga_id);
-                    if (manga) {
-                      setSelectedManga(manga);
-                    } else {
-                      setSelectedManga({"id": result.manga_id, "title_english": result.text});
-                    }
-                    setHighlightedVolumeId(result.id);
+                    return;
                   }
+
+                  const foundManga = mangaList.find(m => m.id === result.manga_id);
+                  setSelectedManga(foundManga ?? { id: result.manga_id ?? 0, title_english: result.text });
+                  setHighlightedVolumeId(result.id);
                 }}
               >
                 {result.text || "Untitled"}
@@ -315,8 +209,7 @@ export default function UserCollectionPage() {
           </div>
         )}
       </div>
-      
-      {/* Dropdown for Collection Type */}
+
       <div className="mb-8 flex gap-4 items-center">
         <label htmlFor="collectionTypeDropdown" className="text-lg font-semibold">
           View:
@@ -324,7 +217,7 @@ export default function UserCollectionPage() {
         <select
           id="collectionTypeDropdown"
           value={collectionType}
-          onChange={(e) => setCollectionType(e.target.value as "collected" | "wishlisted")}
+          onChange={e => setCollectionType(e.target.value as CollectionType)}
           className="px-4 py-2 rounded bg-gray-800 text-white border border-gray-600 cursor-pointer hover:bg-gray-700 transition"
         >
           <option value="collected">Collection</option>
@@ -338,23 +231,11 @@ export default function UserCollectionPage() {
         </button>
       </div>
 
-      {(loading || unauthorized ) ? (
+      {(loading || unauthorized) ? (
         <div className="flex items-center justify-center h-64">
           <svg className="animate-spin h-12 w-12 text-white" viewBox="0 0 24 24">
-            <circle
-              className="opacity-25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              strokeWidth="4"
-              fill="none"
-            />
-            <path
-              className="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
-            />
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
           </svg>
         </div>
       ) : (
@@ -383,6 +264,7 @@ export default function UserCollectionPage() {
               )}
             </div>
           </div>
+
           <div className="w-full md:w-2/3">
             {selectedManga ? (
               <>
@@ -390,44 +272,30 @@ export default function UserCollectionPage() {
                   <h3 className="text-xl font-bold">{selectedManga.title_english || "Untitled"}</h3>
                   <button
                     className={`px-3 py-1 rounded font-semibold shadow ${
-                      collectionType === "collected"
-                        ? "bg-yellow-700 text-white"
-                        : "bg-green-700 text-white"
+                      collectionType === "collected" ? "bg-yellow-700 text-white" : "bg-green-700 text-white"
                     }`}
-                    onClick={() =>
-                      moveAll(selectedManga.id, collectionType === "collected" ? "wishlisted" : "collected")
-                    }
+                    onClick={() => moveAll(selectedManga.id, collectionType === "collected" ? "wishlisted" : "collected")}
                   >
                     Move All to {collectionType === "collected" ? "Wishlist" : "Collection"}
                   </button>
                 </div>
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
                   {volumes.length === 0 ? (
                     <div className="col-span-full text-gray-400">No volumes found.</div>
                   ) : (
                     volumes.map(v => {
-                      const thumbKey =
-                        v.thumbnail_s3_key && typeof v.thumbnail_s3_key === "string"
-                          ? v.thumbnail_s3_key
-                          : v.thumbnail_s3_key && typeof v.thumbnail_s3_key === "object" && "String" in v.thumbnail_s3_key
-                          ? v.thumbnail_s3_key.String
-                          : "";
-                      const imgSrc =
-                        thumbKey && thumbKey.startsWith("http")
-                          ? thumbKey
-                          : thumbKey
-                          ? `https://manga-collection-images.s3.amazonaws.com/${thumbKey}`
-                          : "";
+                      const imgSrc = buildS3ImageUrl(v.thumbnail_s3_key);
                       const isHighlighted = highlightedVolumeId === v.volume_id;
-                      
+
                       return (
                         <div
                           key={v.volume_id}
-                          ref={(el) => { volumeRefs.current[v.volume_id] = el; }}
+                          ref={el => {
+                            volumeRefs.current[v.volume_id] = el;
+                          }}
                           className={`bg-[#222] rounded-xl p-4 flex flex-col items-center border hover:shadow-lg transition ${
-                            isHighlighted 
-                              ? "border-yellow-400 border-2 shadow-lg shadow-yellow-400/50" 
-                              : "border-white"
+                            isHighlighted ? "border-yellow-400 border-2 shadow-lg shadow-yellow-400/50" : "border-white"
                           }`}
                         >
                           <button
@@ -443,10 +311,10 @@ export default function UserCollectionPage() {
                             )}
                             <span className="font-bold text-lg mb-3 block">{v.volume_title}</span>
                           </button>
-                          
+
                           <div className="w-full flex flex-col gap-2">
                             <button
-                              onClick={(e) => {
+                              onClick={e => {
                                 e.stopPropagation();
                                 router.push(`/manga/${selectedManga.id}/volume/${v.volume_id}`);
                               }}
@@ -454,10 +322,10 @@ export default function UserCollectionPage() {
                             >
                               View
                             </button>
-                            
+
                             {collectionType === "collected" && (
                               <button
-                                onClick={(e) => {
+                                onClick={e => {
                                   e.stopPropagation();
                                   moveToWishlist(v.volume_id);
                                 }}
@@ -466,10 +334,10 @@ export default function UserCollectionPage() {
                                 Move to Wishlist
                               </button>
                             )}
-                            
+
                             {collectionType === "wishlisted" && (
                               <button
-                                onClick={(e) => {
+                                onClick={e => {
                                   e.stopPropagation();
                                   moveToCollection(v.volume_id);
                                 }}
@@ -478,9 +346,9 @@ export default function UserCollectionPage() {
                                 Add to Collection
                               </button>
                             )}
-                            
+
                             <button
-                              onClick={(e) => {
+                              onClick={e => {
                                 e.stopPropagation();
                                 removeVolume(v.volume_id);
                               }}

@@ -1,8 +1,14 @@
 "use client";
-import { useState } from "react";
 
-export default function ResendVerificationForm() {
-  const [email, setEmail] = useState("");
+import { useState } from "react";
+import { resendVerification } from "@/lib/actions";
+
+interface Props {
+  email?: string;
+}
+
+export default function ResendVerificationForm({ email: initialEmail = "" }: Props) {
+  const [email, setEmail] = useState(initialEmail);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -10,15 +16,13 @@ export default function ResendVerificationForm() {
     e.preventDefault();
     setMessage("");
     setError("");
-    const res = await fetch("http://localhost:8080/users/resend-verification", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email }),
-    });
-    if (!res.ok) {
+
+    const response = await resendVerification(email);
+    if (!response.ok) {
       setError("Failed to resend verification email");
       return;
     }
+
     setMessage("Verification email sent!");
   }
 
@@ -29,7 +33,7 @@ export default function ResendVerificationForm() {
           <input
             type="email"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={e => setEmail(e.target.value)}
             placeholder="Email"
             required
           />

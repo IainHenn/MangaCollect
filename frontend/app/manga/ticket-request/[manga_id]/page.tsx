@@ -1,38 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { useDropzone } from 'react-dropzone';
-
-function MyDropzone({ onImageSelect }: { onImageSelect: (file: File) => void }) {
-
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    accept: {
-      'image/*': ['.png', '.jpg', '.jpeg', '.gif']
-    },
-    maxFiles: 1,
-    onDrop: (acceptedFiles) => {
-      console.log(acceptedFiles);
-      onImageSelect(acceptedFiles[0]);
-    }
-  });
-
-  return (
-    <div {...getRootProps()} className="border-2 border-dashed border-gray-500 p-8 cursor-pointer rounded hover:border-gray-400 transition-colors">
-      <input {...getInputProps()} />
-      {isDragActive ? (
-        <p>Drop the image here...</p>
-      ) : (
-        <p>Drag and drop an image here, or click to select</p>
-      )}
-    </div>
-  );
-}
-
-type Manga = {
-  id: number;
-  title_english: string | null;
-  cover_image_s3_key: string | null;
-};
+import ImageDropzone from "@/components/manga/ImageDropzone";
+import { fetchManga, submitTicket } from "@/lib/actions";
+import { buildS3ImageUrl, unwrapString } from "@/lib/helpers";
+import type { Manga } from "@/lib/types";
 
 export default function MangaTicketPage() {
   const router = useRouter();
@@ -46,43 +18,28 @@ export default function MangaTicketPage() {
   const [submissionNotes, setSubmissionNotes] = useState<string>("");
 
   useEffect(() => {
-    fetch(`http://localhost:8080/mangas/${manga_id}`)
-      .then(res => {
-        if (res.status !== 200) {
-          throw new Error("Invalid status code!");
+    fetchManga(manga_id)
+      .then(mangaData => {
+        if (!mangaData) {
+          throw new Error("Unable to find manga");
         }
-        return res.json();
-      })
-      .then(data => {
-        const mangaData = {
-          id: data.id,
-          title_english: data.title_english.String,
-          cover_image_s3_key: data.cover_image_s3_key.String
-        };
+
         setManga(mangaData);
-        
-        const coverKey = mangaData.cover_image_s3_key;
-        if (coverKey) {
-          setImgSrc(
-            coverKey.startsWith("http")
-              ? coverKey
-              : `https://manga-collection-images.s3.amazonaws.com/${coverKey}`
-          );
-        }
+        setImgSrc(buildS3ImageUrl(mangaData.cover_image_s3_key));
       })
-      .catch((err) => {
+      .catch(() => {
         alert("Unable to find manga!");
         router.push("/manga");
       });
   }, [manga_id, router]);
 
-  function submitTicket(event: React.FormEvent){
+  async function submitTicketRequest(event: React.FormEvent) {
     event.preventDefault();
 
-      if (!selectedImage || !volumeTitle || !volumeNumber) {
-        alert("Please fill in all fields and select an image.");
-        return;
-      }
+    if (!selectedImage || !volumeTitle || !volumeNumber) {
+      alert("Please fill in all fields and select an image.");
+      return;
+    }
 
     const formData = new FormData();
 
@@ -92,30 +49,16 @@ export default function MangaTicketPage() {
     formData.append("submission_notes", submissionNotes);
     formData.append("image", selectedImage);
 
-
-    fetch(`http://localhost:8080/submissions`, {
-      method: 'POST',
-      body: formData,
-      credentials: 'include'
-    })
-      .then(res => {
-        if (res.status !== 200) {
-          throw new Error("Invalid status code!");
+    submitTicket(formData)
+      .then(response => {
+        if (!response.ok) {
+          throw new Error("Failed to submit ticket!");
         }
-        return res.json();
-      })
-        .then((res) => {
-      if (res.status !== 200) {
-        throw new Error("Failed to submit ticket!");
-      }
-      return res.json();
-    })
-    .then((data) => {
+
       alert("Ticket submitted successfully!");
       router.push(`/manga/${manga_id}`);
     })
-    .catch((err) => {
-      console.error(err);
+    .catch(() => {
       alert("Failed to submit ticket. Please try again.");
     });
   }
@@ -134,21 +77,21 @@ export default function MangaTicketPage() {
             onClick={() => router.push(`/manga/${manga?.id}`)}
             className="px-4 py-2 bg-[#333] text-white rounded border border-gray-600 hover:bg-[#444] hover:border-gray-500 transition-colors text-sm"
           >
-            ← {manga?.title_english}
+            ← {unwrapString(manga?.title_english) || "Manga"}
           </button>
         </div>
         
-        <header className="text-xl font-semibold text-white">Ticket Request: {manga?.title_english}</header>
+        <header className="text-xl font-semibold text-white">Ticket Request: {unwrapString(manga?.title_english)}</header>
         
         {imgSrc && (
           <img
             src={imgSrc}
-            alt={manga?.title_english || ""}
+            alt={unwrapString(manga?.title_english)}
             className="w-32 h-48 object-cover mb-2 rounded shadow-lg"
           />
         )}
         
-        <MyDropzone onImageSelect={setSelectedImage} />
+        <ImageDropzone onImageSelect={setSelectedImage} />
         
         <form className="w-full">
           {selectedImage && (
@@ -167,7 +110,7 @@ export default function MangaTicketPage() {
                     i
                   </button>
                   <div className="absolute left-0 top-7 w-64 bg-[#333] border border-gray-600 rounded p-2 text-xs text-gray-300 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10 shadow-lg">
-                    If the volume has a number, make sure to include it in the volume title (e.g., "Volume 5: The Final Battle")
+                    If the volume has a number, make sure to include it in the volume title (e.g., &quot;Volume 5: The Final Battle&quot;)
                   </div>
                 </div>
                 <input 
@@ -185,7 +128,7 @@ export default function MangaTicketPage() {
               />
               <button 
                 type="submit"
-                onClick={submitTicket}
+                onClick={submitTicketRequest}
                 className="px-6 py-2 bg-white text-black rounded font-medium hover:bg-gray-200 transition-colors"
               >
                 Submit Request

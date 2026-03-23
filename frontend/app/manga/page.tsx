@@ -1,12 +1,9 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
-
-type Manga = {
-  id: number;
-  title_english: string | null;
-  cover_image_s3_key: string | null;
-};
+import { fetchMangas as fetchMangaPage, searchManga } from "@/lib/actions";
+import { buildS3ImageUrl, unwrapString } from "@/lib/helpers";
+import type { Manga, SearchResult } from "@/lib/types";
 
 export default function MangaListPage() {
   const [manga, setManga] = useState<Manga[]>([]);
@@ -19,7 +16,7 @@ export default function MangaListPage() {
 
   const [searchQuery, setSearchQuery] = useState("");
   const [searchType, setSearchType] = useState("manga");
-  const [searchResults, setSearchResults] = useState([]);
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
 
   const [debouncedQuery, setDebouncedQuery] = useState(searchQuery);
 
@@ -34,30 +31,9 @@ export default function MangaListPage() {
       return;
     }
 
-    const controller = new AbortController(); // cancel previous requests
-    const signal = controller.signal;
-
-    fetch(`http://localhost:8080/mangas/search?query=${searchQuery}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        searchFrom: "general",
-        by: searchType,
-      }),
-      signal,
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.results) setSearchResults(data.results);
-        else setSearchResults([]);
-      })
-      .catch((err) => {
-        if (err.name !== "AbortError") console.error(err);
-      });
-
-    return () => controller.abort(); // cleanup previous fetch
+    searchManga(searchQuery, "general", searchType as "manga" | "volume")
+      .then(data => setSearchResults(data.results ?? []))
+      .catch(() => setSearchResults([]));
   }, [searchQuery, searchType]);
 
   // Fetch mangas with offset; backend returns { mangas: [...], hasMore: true/false }
@@ -65,21 +41,8 @@ export default function MangaListPage() {
     try {
       if (append) setLoadingMore(true);
       else setLoading(true);
-      const res = await fetch(`http://localhost:8080/mangas?offset=${nextOffset}`);
-      const data = await res.json();
-
-      const items = Array.isArray(data.mangas) ? data.mangas : [];
-      const normalized = items.map((m: any) => ({
-        ...m,
-        title_english:
-          m.title_english && typeof m.title_english === "object" && "String" in m.title_english
-            ? m.title_english.String
-            : typeof m.title_english === "string"
-            ? m.title_english
-            : "",
-      }));
-
-      setManga(prev => (append ? [...prev, ...normalized] : normalized));
+      const data = await fetchMangaPage(nextOffset);
+      setManga(prev => (append ? [...prev, ...data.mangas] : data.mangas));
       setHasMore(Boolean(data.hasMore));
       setOffset(nextOffset);
     } catch (err) {
@@ -118,8 +81,8 @@ export default function MangaListPage() {
     // include the deps that should re-create observer when pagination state changes
   }, [hasMore, loading, loadingMore, offset]);
 
-  function handleTicket(manga_id){
-    router.push(`/manga/ticket-request/${manga_id}`)
+  function handleTicket(manga_id: number) {
+    router.push(`/manga/ticket-request/${manga_id}`);
   }
 
   return (
@@ -155,7 +118,7 @@ export default function MangaListPage() {
           {/* Results dropdown */}
           {searchResults.length > 0 && searchQuery.length > 0 && (
             <div className="absolute top-full left-0 mt-1 w-full bg-black border border-white rounded-lg max-h-60 overflow-y-auto z-10">
-              {searchResults.map((result: any) => (
+              {searchResults.map(result => (
                 <div
                   key={result.id}
                   className="p-2 hover:bg-gray-700 cursor-pointer"
@@ -207,24 +170,8 @@ export default function MangaListPage() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6 w-full max-w-5xl">
             {manga.map(m => {
-              // Unwrap cover_image_s3_key if needed
-              let coverKey = "";
-              if (m.cover_image_s3_key) {
-                if (typeof m.cover_image_s3_key === "string") {
-                  coverKey = m.cover_image_s3_key;
-                } else if (
-                  typeof m.cover_image_s3_key === "object" &&
-                  "String" in m.cover_image_s3_key
-                ) {
-                  coverKey = m.cover_image_s3_key.String;
-                }
-              }
-              const imgSrc =
-                coverKey && coverKey.startsWith("http")
-                  ? coverKey
-                  : coverKey
-                  ? `https://manga-collection-images.s3.amazonaws.com/${coverKey}`
-                  : "";
+              const imgSrc = buildS3ImageUrl(m.cover_image_s3_key);
+              const title = unwrapString(m.title_english);
 
               return (
 
@@ -235,14 +182,12 @@ export default function MangaListPage() {
                     {imgSrc && (
                       <img
                         src={imgSrc}
-                        alt={typeof m.title_english === "string" ? m.title_english : ""}
+                        alt={title}
                         className="w-32 h-48 object-cover mb-2 rounded"
                       />
                     )}
                     <span className="font-bold text-lg">
-                      {typeof m.title_english === "string" && m.title_english
-                        ? m.title_english
-                        : "Untitled"}
+                      {title || "Untitled"}
                     </span>
                   </div>
                   <button onClick={() => handleTicket(m.id)}>
