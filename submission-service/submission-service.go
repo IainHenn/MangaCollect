@@ -520,7 +520,7 @@ func getSubmissions(c *gin.Context) {
 	c.JSON(200, gin.H{"submissions": submissions})
 }
 
-func acceptSubmission(c *gin.Context) {
+func acceptCreateSubmission(c *gin.Context) {
 	var submissionBody SubmissionBody
 	err := c.BindJSON(&submissionBody)
 	if err != nil && err.Error() != "EOF" {
@@ -761,7 +761,7 @@ func editSubmission(c *gin.Context) {
 		}
 	}
 
-	if validEdits["status"] == "accepted" {
+	if validEdits["status"] == "approved" {
 		c.JSON(400, gin.H{"error": "Not allowed to move submission to accepted through edits!"})
 		return
 	}
@@ -776,7 +776,7 @@ func editSubmission(c *gin.Context) {
 	if validEdits["status"] != nil {
 		var prevStatus string
 		err = conn.QueryRow(`SELECT status FROM manga_volume_submissions WHERE id = $1`, submission_id).Scan(&prevStatus)
-		if err == nil && prevStatus == "accepted" && validEdits["status"] != "accepted" {
+		if err == nil && prevStatus == "approved" && validEdits["status"] != "approved" {
 			_, err = tx.Exec(`DELETE FROM volumes WHERE manga_id = (SELECT manga_id FROM manga_volume_submissions WHERE id = $1) AND volume_number = (SELECT volume_number FROM manga_volume_submissions WHERE id = $1)`, submission_id)
 			if err != nil {
 				c.JSON(500, gin.H{"error": "Failed to delete volume after status change"})
@@ -818,6 +818,271 @@ func editSubmission(c *gin.Context) {
 	c.JSON(200, gin.H{"message": "Submission updated successfully"})
 }
 
+func acceptEditSubmission(c *gin.Context) {
+	var submissionBody SubmissionBody
+	err := c.BindJSON(&submissionBody)
+	if err != nil && err.Error() != "EOF" {
+		c.JSON(500, gin.H{"error": "Failed to accept submission request"})
+		return
+	}
+
+	user_id, valid := getUserID(c)
+	if !valid {
+		c.JSON(400, gin.H{"error": "Unable to verify user request"})
+		return
+	}
+
+	conn, err := get_db_conn()
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to access database"})
+		return
+	}
+	defer conn.Close()
+
+	isAdmin, adminErrMsg := verifyUserIsAdmin(user_id, conn)
+	if !isAdmin {
+		c.JSON(403, gin.H{"error": adminErrMsg})
+		return
+	}
+
+	submission_id := c.Param("submission_id")
+
+	var volumeID int
+	var volumeTitle sql.NullString
+	var volumeNumber sql.NullInt64
+
+	err = conn.QueryRow(`SELECT volume_id, volume_title, volume_number 
+				FROM manga_volume_submissions WHERE id = $1`, submission_id).Scan(&volumeID, &volumeTitle, &volumeNumber)
+	if err == sql.ErrNoRows {
+		c.JSON(404, gin.H{"error": "Failed to fetch submission data"})
+		return
+	} else if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to fetch submission data"})
+		return
+	}
+
+	tx, err := conn.Begin()
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to begin transaction"})
+		return
+	}
+	rollback := true
+
+	defer func() {
+		if rollback {
+			tx.Rollback()
+		}
+	}()
+
+	// Update the volume first.
+	setClauses := []string{}
+	volArgs := []any{volumeID}
+	argIndex := 2
+
+	if volumeTitle.Valid {
+		setClauses = append(setClauses, fmt.Sprintf("title = $%d", argIndex))
+		volArgs = append(volArgs, volumeTitle)
+		argIndex++
+	}
+
+	if volumeNumber.Valid {
+		setClauses = append(setClauses, fmt.Sprintf("volume_number = $%d", argIndex))
+		volArgs = append(volArgs, volumeNumber)
+		argIndex++
+	}
+
+	if len(setClauses) > 0 {
+		updateVolQuery := "UPDATE volumes SET " + strings.Join(setClauses, ", ") + " WHERE id = $1"
+		_, err = tx.Exec(updateVolQuery, volArgs...)
+		if err != nil {
+			fmt.Println(err)
+			c.JSON(500, gin.H{"error": "Failed to update volume"})
+			return
+		}
+	}
+
+	var updateQuery string
+	var args []any
+
+	// Update the submission status after volume changes succeed.
+	if strings.TrimSpace(submissionBody.SubmissionNotes) != "" {
+		updateQuery = `
+			UPDATE manga_volume_submissions
+			SET status = 'approved',
+				reviewed_at = NOW(),
+				reviewed_by = $2,
+				updated_at = NOW(),
+				submission_notes = $3
+			WHERE id = $1`
+		args = []any{submission_id, user_id, submissionBody.SubmissionNotes}
+	} else {
+		updateQuery = `
+			UPDATE manga_volume_submissions
+			SET status = 'approved',
+				reviewed_at = NOW(),
+				reviewed_by = $2,
+				updated_at = NOW(),
+				submission_notes = NULL
+			WHERE id = $1`
+		args = []any{submission_id, user_id}
+	}
+
+	_, err = tx.Exec(updateQuery, args...)
+	if err != nil {
+		fmt.Println(err)
+		c.JSON(500, gin.H{"error": "Failed to update submission status"})
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		c.JSON(500, gin.H{"error": "Failed to commit transaction"})
+		return
+	}
+	rollback = false
+
+	c.JSON(200, gin.H{"message": "Submission accepted and volume edited"})
+}
+
+func acceptDeleteSubmission(c *gin.Context) {
+	var submissionBody SubmissionBody
+	err := c.BindJSON(&submissionBody)
+	if err != nil && err.Error() != "EOF" {
+		c.JSON(400, gin.H{"error": "Failed to accept submission request"})
+		return
+	}
+
+	user_id, valid := getUserID(c)
+	if !valid {
+		c.JSON(400, gin.H{"error": "Unable to verify user request"})
+		return
+	}
+
+	conn, err := get_db_conn()
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to access database"})
+		return
+	}
+	defer conn.Close()
+
+	isAdmin, adminErrMsg := verifyUserIsAdmin(user_id, conn)
+	if !isAdmin {
+		c.JSON(403, gin.H{"error": adminErrMsg})
+		return
+	}
+
+	submission_id := c.Param("submission_id")
+
+	var volumeID int
+	var thumbnail_s3_key sql.NullString
+
+	err = conn.QueryRow(`SELECT v.id, v.thumbnail_s3_key
+				FROM volumes v
+				JOIN manga_volume_submissions mvs ON mvs.volume_id = v.id 
+				WHERE mvs.id = $1
+				AND mvs.type = 'DELETE'
+				`, submission_id).Scan(&volumeID, &thumbnail_s3_key)
+
+	if err == sql.ErrNoRows {
+		c.JSON(404, gin.H{"error": "Failed to fetch submission data"})
+		return
+	} else if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to fetch submission data"})
+		return
+	}
+
+	tx, err := conn.Begin()
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to begin transaction"})
+		return
+	}
+	rollback := true
+
+	defer func() {
+		if rollback {
+			tx.Rollback()
+		}
+	}()
+
+	// Update the volume first.
+	var updateQuery string
+	var args []any
+
+	// Update the submission status after volume changes succeed.
+	if strings.TrimSpace(submissionBody.SubmissionNotes) != "" {
+		updateQuery = `
+			UPDATE manga_volume_submissions
+			SET status = 'approved',
+				reviewed_at = NOW(),
+				reviewed_by = $2,
+				updated_at = NOW(),
+				submission_notes = $3
+			WHERE id = $1`
+		args = []any{submission_id, user_id, submissionBody.SubmissionNotes}
+	} else {
+		updateQuery = `
+			UPDATE manga_volume_submissions
+			SET status = 'approved',
+				reviewed_at = NOW(),
+				reviewed_by = $2,
+				updated_at = NOW(),
+				submission_notes = NULL
+			WHERE id = $1`
+		args = []any{submission_id, user_id}
+	}
+
+	_, err = tx.Exec(updateQuery, args...)
+	if err != nil {
+		fmt.Println(err)
+		c.JSON(500, gin.H{"error": "Failed to update submission status"})
+		return
+	}
+
+	// Delete the volume from the database
+	deleteQuery := `DELETE FROM volumes where id = $1`
+
+	_, err = tx.Exec(deleteQuery, volumeID)
+	if err != nil {
+		fmt.Println(err)
+		c.JSON(500, gin.H{"error": "Failed to delete volume!"})
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		c.JSON(500, gin.H{"error": "Failed to commit transaction"})
+		return
+	}
+	rollback = false
+
+	if thumbnail_s3_key.Valid {
+		// Delete from the S3 bucket after successful transaction
+		awsRegion := os.Getenv("AWS_REGION")
+		awsBucket := os.Getenv("AWS_BUCKET_NAME")
+		if awsRegion == "" || awsBucket == "" {
+			c.JSON(200, gin.H{"message": "Submission accepted and volume deleted", "error": "Failed to fetch image from AWS"})
+			return
+		}
+
+		cfg, err := config.LoadDefaultConfig(context.TODO(), config.WithRegion(awsRegion))
+		if err != nil {
+			c.JSON(200, gin.H{"message": "Submission accepted and volume deleted", "error": "Failed to configure AWS connection"})
+			return
+		}
+		s3Client := s3.NewFromConfig(cfg)
+
+		input := &s3.DeleteObjectInput{
+			Bucket: aws.String(awsBucket),
+			Key:    aws.String(thumbnail_s3_key.String),
+		}
+		_, err = s3Client.DeleteObject(context.TODO(), input)
+		if err != nil {
+			c.JSON(200, gin.H{"message": "Submission accepted and volume deleted", "error": "Failed to upload image to S3"})
+			return
+		}
+	}
+
+	c.JSON(200, gin.H{"message": "Submission accepted and volume deleted"})
+}
+
 func main() {
 	router := gin.Default()
 
@@ -826,8 +1091,10 @@ func main() {
 	router.GET("/submissions/users/:user_id", getSubmissionsFromUser) // gets all submissions from a user
 	router.GET("/submissions/:id", getSubmission)                     // get a specific submission info
 
-	router.GET("/admin/submissions", getSubmissions)                          // List all submissions, takes body with filters, no filters for now
-	router.POST("/admin/submissions/:submission_id/accept", acceptSubmission) // approve submission, add to volumes
+	router.GET("/admin/submissions", getSubmissions)                                // List all submissions, takes body with filters, no filters for now
+	router.POST("/admin/submissions/:submission_id/accept", acceptCreateSubmission) // approve "create" submissions, add volume
+	router.PUT("/admin/submissions/:submission_id/accept", acceptEditSubmission)    // approve "edit" submissions, edit volume
+	router.DELETE("/admin/submissions/:submission_id/accept", acceptDeleteSubmission)
 	router.POST("/admin/submissions/:submission_id/reject", rejectSubmission) // reject submission
 	router.PATCH("/admin/submissions/:submission_id", editSubmission)         // change submission before approving
 
