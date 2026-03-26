@@ -1,4 +1,4 @@
-import type { CollectionMangaEntry, SubmissionRequestType, WrappedNumber, WrappedString, WrappedTime } from "@/lib/types";
+import type { CollectionMangaEntry, SearchResult, SubmissionRequestType, UserSearchResult, WrappedNumber, WrappedString, WrappedTime } from "@/lib/types";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 const USER_TYPE_STORAGE_KEY = "mangacollect_user_type";
@@ -41,6 +41,15 @@ export function mapCollectionManga(response: Record<string, number> | undefined)
   return Object.entries(response).map(([title, id]) => ({
     id,
     title_english: title,
+  }));
+}
+
+export function mapUserSearchResults(results: UserSearchResult[] | undefined): SearchResult[] {
+  if (!Array.isArray(results)) return [];
+
+  return results.map(result => ({
+    id: result.user_id,
+    text: result.username,
   }));
 }
 

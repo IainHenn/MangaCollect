@@ -11,11 +11,14 @@ import type {
   Manga,
   MangaListResponse,
   MangaVolumesResponse,
+  ProfileCollectionMangaResponse,
+  ProfileCollectionVolumesResponse,
   ResetPasswordPayload,
   SearchBy,
   SearchFrom,
   SearchResponse,
   SignUpPayload,
+  UserSearchResponse,
   VerifyEmailPayload,
   Volume,
 } from "@/lib/types";
@@ -172,6 +175,20 @@ export async function searchManga(query: string, searchFrom: SearchFrom, by: Sea
   return { results: data?.results ?? [] };
 }
 
+export async function searchUsers(query: string): Promise<UserSearchResponse> {
+  const response = await apiFetch(`/users/search?search=${encodeURIComponent(query)}`, {
+    method: "GET",
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    return { results: [] };
+  }
+
+  const data = await parseJsonSafe<UserSearchResponse>(response);
+  return { results: data?.results ?? [] };
+}
+
 export async function fetchMangas(offset = 0): Promise<MangaListResponse> {
   const response = await apiFetch(`/mangas?offset=${offset}`);
   if (!response.ok) {
@@ -282,6 +299,44 @@ export async function fetchCollectionVolumes(collectionType: CollectionType, man
 
   if (Array.isArray(data)) return data;
   return Array.isArray(data?.volumes) ? data.volumes : [];
+}
+
+export async function fetchProfileCollectionManga(userId: number, collectionType: CollectionType): Promise<{ unauthorized: boolean; manga: CollectionTypeResponse["manga"]; isOwner: boolean; username?: string; error?: string }> {
+  const response = await apiFetch(`/users/${userId}/collection_type/${collectionType}`, { credentials: "include" });
+
+  if (response.status === 401 || response.status === 403) {
+    return { unauthorized: true, manga: {}, isOwner: false };
+  }
+
+  if (!response.ok) {
+    const data = await parseJsonSafe<ApiStatusResponse>(response);
+    return { unauthorized: false, manga: {}, isOwner: false, error: data?.error ?? "Failed to fetch profile collection" };
+  }
+
+  const data = await parseJsonSafe<ProfileCollectionMangaResponse>(response);
+  return {
+    unauthorized: false,
+    manga: data?.manga ?? {},
+    isOwner: Boolean(data?.isOwner),
+    username: data?.username,
+  };
+}
+
+export async function fetchProfileCollectionVolumes(userId: number, collectionType: CollectionType, mangaId: number): Promise<{ volumes: Volume[]; isOwner: boolean; username?: string }> {
+  const response = await apiFetch(`/users/${userId}/collection_type/${collectionType}/${mangaId}`, { credentials: "include" });
+  if (!response.ok) return { volumes: [], isOwner: false };
+
+  const data = await parseJsonSafe<Volume[] | ProfileCollectionVolumesResponse>(response);
+
+  if (Array.isArray(data)) {
+    return { volumes: data, isOwner: false };
+  }
+
+  return {
+    volumes: Array.isArray(data?.volumes) ? data.volumes : [],
+    isOwner: Boolean(data?.isOwner),
+    username: data?.username,
+  };
 }
 
 export async function submitTicket(formData: FormData): Promise<Response> {

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -490,6 +491,7 @@ func getVolumesByMangaAndType(c *gin.Context) {
 	godotenv.Load()
 	userID, ok := getUserIDFromCookie(c)
 	if !ok {
+		c.JSON(500, gin.H{"error": "Failed to verify user!"})
 		return
 	}
 
@@ -578,6 +580,51 @@ func getVolumesByMangaAndType(c *gin.Context) {
 	}
 }
 
+// Searching users, will want to add a check on future "private" column, private users are left alone
+func search(c *gin.Context) {
+	godotenv.Load()
+
+	userID, ok := getUserIDFromCookie(c)
+	if !ok {
+		return
+	}
+
+	search, _ := c.GetQuery("search")
+
+	conn, err := get_db_conn()
+
+	rows, err := conn.Query(`SELECT id AS user_id, username FROM users
+		WHERE similarity(username, $1) > 0.1
+		AND id != $2
+		ORDER BY similarity(username, $1) DESC`,
+		search,
+		userID,
+	)
+
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Server error"})
+		return
+	}
+
+	defer rows.Close()
+
+	type UsersFetch struct {
+		UserID   int    `json:"user_id"`
+		Username string `json:"username"`
+	}
+
+	var results []UsersFetch
+
+	for rows.Next() {
+		var su UsersFetch
+		if err := rows.Scan(&su.UserID, &su.Username); err == nil {
+			results = append(results, su)
+		}
+	}
+
+	c.JSON(200, gin.H{"results": results})
+}
+
 func get_db_conn() (*sql.DB, error) {
 	db := os.Getenv("DATABASE")
 	host := os.Getenv("HOST")
@@ -592,6 +639,199 @@ func get_db_conn() (*sql.DB, error) {
 	}
 
 	return conn, nil
+}
+
+func getUsernameByID(conn *sql.DB, userID int) (string, bool) {
+	var username string
+	err := conn.QueryRow(`SELECT username FROM users WHERE id = $1`, userID).Scan(&username)
+	if err != nil {
+		return "", false
+	}
+
+	return username, true
+}
+
+func getUserUniqueManga(c *gin.Context) {
+	godotenv.Load()
+	userID, ok := getUserIDFromCookie(c)
+	if !ok {
+		c.JSON(500, gin.H{"error": "Failed to verify user!"})
+		return
+	}
+
+	requestedUserID, err := strconv.Atoi(c.Param("user_id"))
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to parse requested user ID"})
+		return
+	}
+
+	isOwner := userID == requestedUserID
+
+	mangaType := c.Param("type")
+	if mangaType != "wishlisted" && mangaType != "collected" && mangaType != "all" {
+		c.JSON(400, gin.H{"error": "Invalid type"})
+		return
+	}
+
+	conn, err := get_db_conn()
+	if err != nil {
+		c.JSON(500, gin.H{"error": "DB error"})
+		return
+	}
+	defer conn.Close()
+
+	username, ok := getUsernameByID(conn, requestedUserID)
+	if !ok {
+		c.JSON(404, gin.H{"error": "User not found"})
+		return
+	}
+
+	var rows *sql.Rows
+	if mangaType == "all" {
+		rows, err = conn.Query(`
+			SELECT DISTINCT m.id, m.title_english
+			FROM user_manga um
+			JOIN volumes v ON um.manga_volume_id = v.id
+			JOIN manga m ON m.id = v.manga_id
+			WHERE um.user_id = $1
+		`, requestedUserID)
+	} else {
+		rows, err = conn.Query(`
+			SELECT DISTINCT m.id, m.title_english
+			FROM user_manga um
+			JOIN volumes v ON um.manga_volume_id = v.id
+			JOIN manga m ON m.id = v.manga_id
+			WHERE um.user_id = $1 and um.status = $2
+		`, requestedUserID, mangaType)
+	}
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to get unique manga"})
+		return
+	}
+	defer rows.Close()
+
+	var mangaMap map[string]int = make(map[string]int)
+	for rows.Next() {
+		var mangaID int
+		var mangaTitle string
+		if err := rows.Scan(&mangaID, &mangaTitle); err == nil {
+			mangaMap[mangaTitle] = mangaID
+		}
+	}
+	c.JSON(200, gin.H{"manga": mangaMap, "isOwner": isOwner, "username": username})
+}
+
+func getUserVolumesByMangaAndType(c *gin.Context) {
+	godotenv.Load()
+	userID, ok := getUserIDFromCookie(c)
+	if !ok {
+		c.JSON(500, gin.H{"error": "Failed to verify user!"})
+		return
+	}
+
+	requestedUserID, err := strconv.Atoi(c.Param("user_id"))
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to parse requested user ID"})
+		return
+	}
+
+	isOwner := userID == requestedUserID
+
+	mangaID := c.Param("manga_id")
+	colStatus := c.Param("type")
+
+	// when looking for manga volumes that we DONT have in our collection
+	if colStatus == "neither" {
+		conn, err := get_db_conn()
+		if err != nil {
+			c.JSON(500, gin.H{"error": "DB error"})
+			return
+		}
+		defer conn.Close()
+
+		username, ok := getUsernameByID(conn, requestedUserID)
+		if !ok {
+			c.JSON(404, gin.H{"error": "User not found"})
+			return
+		}
+
+		rows, err := conn.Query(`
+			SELECT v.id as volume_id, v.title as volume_title, v.thumbnail_s3_key
+			FROM volumes v
+			JOIN manga m ON m.id = v.manga_id
+			WHERE m.id = $1
+				AND v.id NOT IN (
+					SELECT um.manga_volume_id
+					FROM user_manga um
+					WHERE um.user_id = $2
+						AND (um.status = 'collected' OR um.status = 'wishlisted')
+				)
+		`, mangaID, requestedUserID)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "Failed to get volumes"})
+			return
+		}
+		defer rows.Close()
+
+		type VolumeSummary struct {
+			VolumeID       int            `json:"volume_id"`
+			VolumeTitle    string         `json:"volume_title"`
+			ThumbnailS3Key sql.NullString `json:"thumbnail_s3_key"`
+		}
+
+		var volumes []VolumeSummary
+		for rows.Next() {
+			var v VolumeSummary
+			if err := rows.Scan(&v.VolumeID, &v.VolumeTitle, &v.ThumbnailS3Key); err == nil {
+				volumes = append(volumes, v)
+			}
+		}
+		c.JSON(200, gin.H{"volumes": volumes, "isOwner": isOwner, "username": username})
+	} else {
+		// Otherwise, of this manga, get the volumes we have wishlisted/collected
+		conn, err := get_db_conn()
+		if err != nil {
+			c.JSON(500, gin.H{"error": "DB error"})
+			return
+		}
+		defer conn.Close()
+
+		username, ok := getUsernameByID(conn, requestedUserID)
+		if !ok {
+			c.JSON(404, gin.H{"error": "User not found"})
+			return
+		}
+
+		rows, err := conn.Query(`
+			SELECT v.id as volume_id, v.title as volume_title, v.thumbnail_s3_key
+			FROM user_manga um
+			JOIN volumes v ON v.id = um.manga_volume_id
+			JOIN manga m ON m.id = v.manga_id
+			WHERE um.status = $1
+				AND um.user_id = $2
+				AND m.id = $3
+		`, colStatus, requestedUserID, mangaID)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "Failed to get volumes"})
+			return
+		}
+		defer rows.Close()
+
+		type VolumeSummary struct {
+			VolumeID       int            `json:"volume_id"`
+			VolumeTitle    string         `json:"volume_title"`
+			ThumbnailS3Key sql.NullString `json:"thumbnail_s3_key"`
+		}
+
+		var volumes []VolumeSummary
+		for rows.Next() {
+			var v VolumeSummary
+			if err := rows.Scan(&v.VolumeID, &v.VolumeTitle, &v.ThumbnailS3Key); err == nil {
+				volumes = append(volumes, v)
+			}
+		}
+		c.JSON(200, gin.H{"volumes": volumes, "isOwner": isOwner, "username": username})
+	}
 }
 
 func main() {
@@ -614,5 +854,10 @@ func main() {
 
 	router.GET("/collection_type/:type", getUniqueManga)
 	router.GET("/collection_type/:type/:manga_id", getVolumesByMangaAndType)
+
+	router.GET("/:user_id/collection_type/:type", getUserUniqueManga)
+	router.GET("/:user_id/collection_type/:type/:manga_id", getUserVolumesByMangaAndType)
+
+	router.GET("/search", search)
 	router.Run(":8080")
 }

@@ -47,6 +47,15 @@ export interface SearchResult {
   manga_id?: number;
 }
 
+export interface UserSearchResult {
+  user_id: number;
+  username: string;
+}
+
+export interface UserSearchResponse {
+  results: UserSearchResult[];
+}
+
 export interface Manga {
   id: number;
   title_english: WrappedString;
@@ -92,6 +101,18 @@ export interface SearchResponse {
 
 export interface CollectionTypeResponse {
   manga: Record<string, number>;
+}
+
+export interface ProfileCollectionMangaResponse {
+  manga: Record<string, number>;
+  isOwner?: boolean;
+  username?: string;
+}
+
+export interface ProfileCollectionVolumesResponse {
+  volumes: Volume[];
+  isOwner?: boolean;
+  username?: string;
 }
 
 export interface CollectionMangaEntry {

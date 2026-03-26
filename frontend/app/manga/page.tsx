@@ -1,8 +1,8 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { fetchMangas as fetchMangaPage, searchManga, signOut } from "@/lib/actions";
-import { clearStoredUserId, clearStoredUserType, unwrapString } from "@/lib/helpers";
+import { fetchMangas as fetchMangaPage, searchManga, searchUsers, signOut } from "@/lib/actions";
+import { clearStoredUserId, clearStoredUserType, mapUserSearchResults, unwrapString } from "@/lib/helpers";
 import type { Manga, SearchResult } from "@/lib/types";
 import MangaCard from "@/components/manga/MangaCard";
 
@@ -16,7 +16,7 @@ export default function MangaListPage() {
   const [loadingMore, setLoadingMore] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchType, setSearchType] = useState("manga");
+  const [searchType, setSearchType] = useState<"manga" | "volume" | "user">("manga");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [loggingOut, setLoggingOut] = useState(false);
 
@@ -33,7 +33,14 @@ export default function MangaListPage() {
       return;
     }
 
-    searchManga(searchQuery, "general", searchType as "manga" | "volume")
+    if (searchType === "user") {
+      searchUsers(searchQuery)
+        .then(data => setSearchResults(mapUserSearchResults(data.results)))
+        .catch(() => setSearchResults([]));
+      return;
+    }
+
+    searchManga(searchQuery, "general", searchType)
       .then(data => setSearchResults(data.results ?? []))
       .catch(() => setSearchResults([]));
   }, [searchQuery, searchType]);
@@ -120,6 +127,7 @@ export default function MangaListPage() {
           >
             <option value="manga">Manga</option>
             <option value="volume">Volume</option>
+            <option value="user">User</option>
           </select>
           
           <input
@@ -140,7 +148,9 @@ export default function MangaListPage() {
                   className="p-2 hover:bg-gray-700 cursor-pointer"
                   onClick={() => {
                     setSearchQuery(result.text || "");
-                    if (searchType == "manga") {
+                    if (searchType === "user") {
+                      router.push(`/manga/profile/${result.id}`)
+                    } else if (searchType == "manga") {
                       router.push(`/manga/${result.id}`)
                     } else {
                       router.push(`/manga/${result.manga_id}/volume/${result.id}`)

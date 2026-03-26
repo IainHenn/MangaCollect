@@ -62,6 +62,22 @@ func getUserIDFromCookie(c *gin.Context) (int, bool) {
 	return int(claims.UserID), true
 }
 
+func getUsername(userID int) (string, bool) {
+	conn, err := get_db_conn()
+	if err != nil {
+		return "", false
+	}
+	defer conn.Close()
+
+	var username string
+	err = conn.QueryRow(`SELECT username FROM users WHERE id = $1`, userID).Scan(&username)
+	if err != nil {
+		return "", false
+	}
+
+	return username, true
+}
+
 func get_mangas(c *gin.Context) {
 	godotenv.Load()
 
@@ -543,6 +559,21 @@ func search(c *gin.Context) {
 				c.JSON(500, gin.H{"error": "Failed to query"})
 				return
 			}
+		} else {
+			rows, err = conn.Query(`SELECT DISTINCT m.id, m.title_english, similarity(m.title_english, $3) as sim
+			FROM manga m
+			JOIN volumes v ON v.manga_id = m.id
+			JOIN user_manga um ON um.manga_volume_id = v.id
+			WHERE um.user_id = $1
+			AND um.status = $2
+			AND similarity(m.title_english, $3) > 0.1
+			ORDER BY similarity(m.title_english, $3) DESC`, userID, searchBody.SearchFrom, query)
+
+			if err != nil {
+				fmt.Println(err)
+				c.JSON(500, gin.H{"error": "Failed to query"})
+				return
+			}
 		}
 
 	case "volume":
@@ -582,6 +613,11 @@ func search(c *gin.Context) {
 		return
 	}
 
+	if rows == nil {
+		c.JSON(500, gin.H{"error": "Search query returned no result set"})
+		return
+	}
+
 	defer rows.Close()
 
 	var results []map[string]interface{}
@@ -589,13 +625,12 @@ func search(c *gin.Context) {
 	switch scenario {
 	case "manga":
 		for rows.Next() {
-			var id int
 			var manga_id int
 			var text string
 			var similarity float32
 
 			if general != true {
-				err = rows.Scan(&id, &manga_id, &text, &similarity)
+				err = rows.Scan(&manga_id, &text, &similarity)
 				if err != nil {
 					fmt.Println(err)
 					c.JSON(500, gin.H{"error": "Scan failed"})

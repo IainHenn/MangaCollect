@@ -7,6 +7,7 @@ interface CollectionVolumeCardProps {
   thumbnailKey?: string;
   isHighlighted: boolean;
   collectionType: "collected" | "wishlisted";
+  readOnly?: boolean;
   onView: (mangaId: number, volumeId: number) => void;
   onMoveToWishlist: (volumeId: number) => void;
   onMoveToCollection: (volumeId: number) => void;
@@ -21,6 +22,7 @@ export default function CollectionVolumeCard({
   thumbnailKey,
   isHighlighted,
   collectionType,
+  readOnly = false,
   onView,
   onMoveToWishlist,
   onMoveToCollection,
@@ -58,7 +60,7 @@ export default function CollectionVolumeCard({
           View
         </button>
 
-        {collectionType === "collected" && (
+        {!readOnly && collectionType === "collected" && (
           <button
             onClick={e => {
               e.stopPropagation();
@@ -70,7 +72,7 @@ export default function CollectionVolumeCard({
           </button>
         )}
 
-        {collectionType === "wishlisted" && (
+        {!readOnly && collectionType === "wishlisted" && (
           <button
             onClick={e => {
               e.stopPropagation();
@@ -82,15 +84,17 @@ export default function CollectionVolumeCard({
           </button>
         )}
 
-        <button
-          onClick={e => {
-            e.stopPropagation();
-            onRemove(volumeId);
-          }}
-          className="w-full px-2 py-1 rounded bg-red-700 text-white text-sm font-semibold hover:bg-red-800 transition"
-        >
-          Remove
-        </button>
+        {!readOnly && (
+          <button
+            onClick={e => {
+              e.stopPropagation();
+              onRemove(volumeId);
+            }}
+            className="w-full px-2 py-1 rounded bg-red-700 text-white text-sm font-semibold hover:bg-red-800 transition"
+          >
+            Remove
+          </button>
+        )}
       </div>
     </div>
   );
