@@ -1091,12 +1091,12 @@ func main() {
 	router.GET("/submissions/users/:user_id", getSubmissionsFromUser) // gets all submissions from a user
 	router.GET("/submissions/:id", getSubmission)                     // get a specific submission info
 
-	router.GET("/admin/submissions", getSubmissions)                                // List all submissions, takes body with filters, no filters for now
-	router.POST("/admin/submissions/:submission_id/accept", acceptCreateSubmission) // approve "create" submissions, add volume
-	router.PUT("/admin/submissions/:submission_id/accept", acceptEditSubmission)    // approve "edit" submissions, edit volume
-	router.DELETE("/admin/submissions/:submission_id/accept", acceptDeleteSubmission)
-	router.POST("/admin/submissions/:submission_id/reject", rejectSubmission) // reject submission
-	router.PATCH("/admin/submissions/:submission_id", editSubmission)         // change submission before approving
+	router.GET("/admin/submissions", getSubmissions)                                  // List all submissions, takes body with filters, no filters for now
+	router.POST("/admin/submissions/:submission_id/accept", acceptCreateSubmission)   // approve "create" submissions, add volume
+	router.PUT("/admin/submissions/:submission_id/accept", acceptEditSubmission)      // approve "edit" submissions, edit volume
+	router.DELETE("/admin/submissions/:submission_id/accept", acceptDeleteSubmission) // approve "delete" submissions, delete volume
+	router.POST("/admin/submissions/:submission_id/reject", rejectSubmission)         // reject submission
+	router.PATCH("/admin/submissions/:submission_id", editSubmission)                 // change submission before approving
 
 	router.Run(":8080")
 }
